@@ -71,9 +71,12 @@ Automação para download em lote de XMLs de NFe de entrada do portal da SEFAZ G
 git clone https://github.com/seu-usuario/nfe-automator.git
 cd nfe-automator
 
+### 2. Instale as dependências
 pip install -r requirements.txt
 
+### 3. Configure as credenciais
 cp config.example.py config.py
+
 # Edite o config.py com suas credenciais
 CONFIG = {
     'usuario': 'seu_cpf_aqui',
@@ -84,3 +87,4 @@ CONFIG = {
 }
 
 python main.py
+
