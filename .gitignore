@@ -1,0 +1,6 @@
+# Configurações sensíveis
+config.py
+.env
+__pycache__/
+*.log
+.vscode/
