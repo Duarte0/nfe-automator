@@ -1,9 +1,3 @@
-# 🚀 Automação SEFAZ Goiás - Download XML NFe
-
-Solução completa para automação de download de XMLs de NFe de entrada do portal da SEFAZ Goiás.
-
-## 📦 Instalação Rápida
-
 ### Para Usuários Finais:
 1. **Baixe** a pasta completa do projeto
 2. **Execute** `install.bat` como Administrador
