@@ -1,199 +1,289 @@
-import time
+"""
+Ponto de entrada principal da automação SEFAZ NFe
+"""
+import sys
+import os
 import logging
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait, Select
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.service import Service
+import traceback
+from datetime import datetime
 
-from config import CONFIG
+# Configuração de imports
+from config_manager import gerenciador_config
+from sefaz_automator import AutomatorSEFAZ
 
-# Configurar logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
-class SEFAZAutomator:
-    def __init__(self):
-        self.driver = None
-        self.wait = None
+def configurar_logging():
+    """
+    Configura sistema de logging robusto.
+    
+    Cria arquivos de log com timestamp e configura formato profissional.
+    """
+    try:
+        # Criar pasta de logs se não existir
+        pasta_logs = "logs"
+        os.makedirs(pasta_logs, exist_ok=True)
         
-    def setup_driver(self):
-        """Configura o Chrome Driver com opções otimizadas"""
-        try:
-            options = webdriver.ChromeOptions()
-            
-            # Otimizações para evitar detecção
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_argument("--disable-extensions")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            options.add_experimental_option('useAutomationExtension', False)
-            
-            # Para desenvolvimento, manter visível
-            # options.add_argument("--headless")  # Descomente em produção
-            
-            service = Service(ChromeDriverManager().install())
-            self.driver = webdriver.Chrome(service=service, options=options)
-            
-            # Enganar detecção de automation
-            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            
-            self.wait = WebDriverWait(self.driver, 20)
-            logger.info("✅ Driver configurado")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Erro ao configurar driver: {e}")
-            return False
-
-    def login(self):
-        """Realiza login no sistema SEFAZ"""
-        try:
-            logger.info("🌐 Navegando para SEFAZ Goiás")
-            self.driver.get("https://www.sefaz.go.gov.br/netaccess/000System/acessoRestrito/")
-            time.sleep(3)
-            
-            # Preencher credenciais
-            usuario_field = self.wait.until(EC.presence_of_element_located((By.ID, "username")))
-            usuario_field.clear()
-            usuario_field.send_keys(CONFIG['usuario'])
-            
-            senha_field = self.driver.find_element(By.ID, "password")
-            senha_field.clear()
-            senha_field.send_keys(CONFIG['senha'])
-            
-            logger.info("🔑 Credenciais preenchidas, realizando login...")
-            login_btn = self.driver.find_element(By.ID, "btnAuthenticate")
-            login_btn.click()
-            
-            # Aguardar login
-            time.sleep(5)
-            
-            if "acessoRestrito" in self.driver.current_url:
-                logger.info("✅ Login realizado com sucesso")
-                return True
-            else:
-                logger.error("❌ Falha no login - verifique credenciais")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Erro no login: {e}")
-            return False
-
-    def navegar_para_download_xml(self):
-        """Navega até a página de download de XML"""
-        try:
-            logger.info("📂 Navegando para Download XML...")
-            time.sleep(3)
-            
-            # Usar XPath pelo texto do link
-            menu_xml = self.wait.until(
-                EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Baixar XML NFE')]"))
-            )
-            menu_xml.click()
-            
-            # Aguardar carregamento da nova página
-            time.sleep(5)
-            
-            if "consulta-notas-recebidas" in self.driver.current_url:
-                logger.info("✅ Navegação para Download XML concluída")
-                return True
-            else:
-                logger.warning("⚠️ Possível problema na navegação")
-                return True  # Continua mesmo com warning
-                
-        except Exception as e:
-            logger.error(f"❌ Erro na navegação: {e}")
-            return False
-
-    def preencher_formulario(self):
-        """Preenche o formulário de consulta"""
-        try:
-            logger.info("📝 Preenchendo formulário de consulta...")
-            
-            # Aguardar elementos do formulário
-            data_inicio_field = self.wait.until(EC.presence_of_element_located((By.ID, "cmpDataInicial")))
-            
-            # Preencher campos
-            data_inicio_field.clear()
-            data_inicio_field.send_keys(CONFIG['data_inicio'])
-            
-            data_fim_field = self.driver.find_element(By.ID, "cmpDataFinal")
-            data_fim_field.clear()
-            data_fim_field.send_keys(CONFIG['data_fim'])
-            
-            ie_field = self.driver.find_element(By.ID, "cmpNumIeDest")
-            ie_field.clear()
-            ie_field.send_keys(CONFIG['inscricao_estadual'])
-            
-            # Selecionar modelo NF-e
-            modelo_select = Select(self.driver.find_element(By.ID, "cmpModelo"))
-            modelo_select.select_by_value("55")
-            
-            logger.info("✅ Formulário preenchido")
-            logger.info("🛑 AGUARDANDO RESOLUÇÃO MANUAL DO CAPTCHA...")
-            
-            # Aguardar captcha manual
-            input("👉 Resolva o CAPTCHA e pressione ENTER para continuar...")
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Erro ao preencher formulário: {e}")
-            return False
-
-    def executar_pesquisa(self):
-        """Executa a pesquisa após captcha"""
-        try:
-            logger.info("🔍 Executando pesquisa...")
-            
-            pesquisar_btn = self.wait.until(
-                EC.element_to_be_clickable((By.ID, "btnPesquisar"))
-            )
-            pesquisar_btn.click()
-            
-            logger.info("✅ Pesquisa executada - aguardando resultados...")
-            time.sleep(10)
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Erro na pesquisa: {e}")
-            return False
-
-    def run(self):
-        """Executa o fluxo completo"""
-        logger.info("🚀 Iniciando automação SEFAZ")
+        # Nome do arquivo com timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nome_arquivo_log = f"nfe_automation_{timestamp}.log"
+        caminho_log = os.path.join(pasta_logs, nome_arquivo_log)
         
-        if not self.setup_driver():
-            return False
-            
+        # 🔧 CONFIGURAÇÃO DE LOGGING LIMPO
+        log_levels = {
+            '__main__': logging.INFO,
+            'sefaz_automator': logging.INFO,
+            'config_manager': logging.INFO,
+            'driver_manager': logging.INFO,
+            'selenium': logging.WARNING,           # Apenas warnings e erros
+            'selenium.webdriver.remote.remote_connection': logging.WARNING,
+            'urllib3': logging.WARNING,            # Apenas warnings
+            'urllib3.connectionpool': logging.WARNING,
+            'WDM': logging.INFO,                   # Info apenas
+            'webdriver_manager': logging.INFO,
+        }
+        
+        # Configurar nível para cada logger
+        for logger_name, level in log_levels.items():
+            logging.getLogger(logger_name).setLevel(level)
+        
+        # Configuração específica do Selenium Remote Connection
         try:
-            steps = [
-                self.login,
-                self.navegar_para_download_xml,
-                self.preencher_formulario,
-                self.executar_pesquisa
-            ]
-            
-            for step in steps:
-                if not step():
-                    logger.error(f"❌ Falha no passo: {step.__name__}")
-                    return False
-                    
-            logger.info("🎉 Processo concluído com sucesso!")
-            return True
-            
-        except Exception as e:
-            logger.error(f"💥 Erro no processo: {e}")
+            from selenium.webdriver.remote.remote_connection import LOGGER
+            LOGGER.setLevel(logging.WARNING)
+        except ImportError:
+            pass
+        
+        # Handler principal para aplicação
+        formatter = logging.Formatter(
+            '%(asctime)s | %(levelname)-8s | %(name)-25s | %(message)s'
+        )
+        
+        # Arquivo de log principal
+        file_handler = logging.FileHandler(caminho_log, encoding='utf-8')
+        file_handler.setFormatter(formatter)
+        
+        # Console handler (apenas para aplicação)
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(formatter)
+        
+        # Aplicar handlers apenas aos loggers da aplicação
+        app_loggers = ['__main__', 'sefaz_automator', 'config_manager', 'driver_manager']
+        for logger_name in app_loggers:
+            logger = logging.getLogger(logger_name)
+            logger.addHandler(file_handler)
+            logger.addHandler(console_handler)
+            logger.propagate = False  # Evitar duplicação
+        
+        logger_principal = logging.getLogger(__name__)
+        logger_principal.info(f"📝 LOG INICIADO: {caminho_log}")
+        logger_principal.info("🧹 LOGGING LIMPO CONFIGURADO")
+        logger_principal.info("🔧 Selenium: apenas WARNING+ | Chrome: logs silenciados")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ ERRO NA CONFIGURAÇÃO DE LOGGING: {e}")
+        return False
+
+
+def mostrar_banner():
+    """Exibe banner profissional."""
+    print("\n" + "="*70)
+    print("🚀 AUTOMAÇÃO SEFAZ NFe - DOWNLOAD DE XMLs")
+    print("="*70)
+    print(f"📅 Início: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+    print("🔧 Sistema otimizado com gerenciamento de abas")
+    print("="*70)
+
+
+def verificar_ambiente():
+    """
+    Verifica se o ambiente está configurado corretamente.
+    
+    Returns:
+        bool: True se o ambiente está OK, False caso contrário
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Verificar se arquivos necessários existem
+    arquivos_necessarios = [
+        "config.py",
+        "sefaz_automator.py",
+        "config_manager.py",
+        "driver_manager.py", 
+        "constants.py"
+    ]
+    
+    for arquivo in arquivos_necessarios:
+        if not os.path.exists(arquivo):
+            logger.warning(f"⚠️ Arquivo não encontrado: {arquivo}")
             return False
-        finally:
-            if self.driver:
-                input("Pressione ENTER para fechar o navegador...")
-                self.driver.quit()
+    
+    # Verificar pasta drivers
+    if not os.path.exists("drivers"):
+        logger.warning("⚠️ Pasta 'drivers' não encontrada")
+        logger.info("💡 O WebDriver Manager pode baixar automaticamente")
+    
+    return True
+
+
+def executar_automacao():
+    """
+    Executa o fluxo principal de automação.
+    
+    Returns:
+        bool: True se bem sucedido, False caso contrário
+    """
+    logger = logging.getLogger(__name__)
+    automator = None
+    
+    try:
+        # 1. Carregar configurações
+        logger.info("📋 Etapa 1/4: Carregando configurações...")
+        config = gerenciador_config.carregar_config()
+        if not config:
+            logger.error("❌ Falha crítica: Não foi possível carregar as configurações")
+            return False
+        
+        # 2. Inicializar automator
+        logger.info("🔧 Etapa 2/4: Inicializando automator...")
+        automator = AutomatorSEFAZ()
+        
+        if not automator.inicializar(config):
+            logger.error("❌ Falha crítica: Não foi possível inicializar o automator")
+            return False
+        
+        # 3. Executar fluxo principal
+        logger.info("🔄 Etapa 3/4: Executando fluxo de automação...")
+        sucesso = automator.executar_fluxo()
+        
+        # 4. Resultado final
+        if sucesso:
+            logger.info("🎉 Etapa 4/4: Processo concluído com SUCESSO!")
+            return True
+        else:
+            logger.error("❌ Etapa 4/4: Processo interrompido devido a erros")
+            return False
+            
+    except KeyboardInterrupt:
+        print("\n\n⏹️  Processo interrompido pelo usuário")
+        logger.warning("Processo interrompido pelo usuário via Ctrl+C")
+        return False
+        
+    except Exception as e:
+        logger.error(f"💥 Erro não tratado: {e}")
+        logger.error(f"🔍 Stack trace: {traceback.format_exc()}")
+        return False
+        
+    finally:
+        # Cleanup garantido e seguro
+        executar_cleanup(automator)
+
+
+def executar_cleanup(automator):
+    """
+    Executa limpeza de recursos de forma segura.
+    
+    Args:
+        automator: Instância do AutomatorSEFAZ ou None
+    """
+    logger = logging.getLogger(__name__)
+    
+    try:
+        if automator is not None:
+            logger.info("🧹 Executando limpeza de recursos...")
+            automator.limpar_recursos()
+            logger.info("✅ Limpeza concluída")
+        else:
+            logger.debug("ℹ️  Nenhum recurso para limpar")
+            
+    except Exception as e:
+        logger.error(f"⚠️ Erro durante limpeza: {e}")
+
+
+def mostrar_resultado(sucesso):
+    """
+    Exibe resultado final baseado no sucesso da execução.
+    
+    Args:
+        sucesso: Booleano indicando sucesso ou falha
+    """
+    print("\n" + "="*70)
+    
+    if sucesso:
+        print("🎉 SUCESSO: Processo concluído!")
+        print("📊 Verifique os resultados no navegador")
+        print("💾 XMLs disponíveis para download")
+    else:
+        print("❌ ERRO: Processo interrompido")
+        print("📋 Consulte o arquivo de log para detalhes")
+        print("🔧 Verifique: config.py, conexão, credenciais")
+    
+    print("⏰ Fim:", datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
+    print("="*70)
+
+
+def main():
+    """
+    Função principal da aplicação.
+    
+    Coordena toda a execução com tratamento robusto de erros.
+    
+    Returns:
+        int: Código de saída para o sistema operacional
+    """
+    # Configurar logging primeiro
+    if not configurar_logging():
+        print("❌ Não foi possível inicializar o sistema de logging")
+        return 1
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Banner inicial
+        mostrar_banner()
+        logger.info("Iniciando aplicação de automação SEFAZ NFe")
+        
+        # Verificar ambiente
+        logger.info("🔍 Verificando ambiente...")
+        if not verificar_ambiente():
+            logger.warning("⚠️ Alguns arquivos podem estar faltando, mas continuando...")
+        
+        # Executar automação principal
+        sucesso = executar_automacao()
+        
+        # Mostrar resultado final
+        mostrar_resultado(sucesso)
+        
+        return 0 if sucesso else 1
+        
+    except Exception as e:
+        # Erro crítico durante inicialização
+        print(f"\n💥 ERRO CRÍTICO: {e}")
+        logger.critical(f"Erro durante inicialização: {e}")
+        logger.critical(f"Stack trace: {traceback.format_exc()}")
+        return 1
+        
+    finally:
+        # Aguardar input do usuário antes de fechar
+        try:
+            input("\nPressione ENTER para sair...")
+        except:
+            pass  # Ignora erro se não houver input disponível
+
 
 if __name__ == "__main__":
-    automator = SEFAZAutomator()
-    automator.run()
+    """
+    Ponto de entrada do script.
+    
+    Garante que a aplicação sempre retorne um código de saída apropriado.
+    """
+    try:
+        codigo_saida = main()
+        sys.exit(codigo_saida)
+    except KeyboardInterrupt:
+        print("\n\n⏹️  Aplicação interrompida")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n💥 ERRO INESPERADO: {e}")
+        sys.exit(1)
