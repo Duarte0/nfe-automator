@@ -5,6 +5,9 @@ Automação SEFAZ - Download XML NFe
 import time
 import logging
 from typing import List, Optional
+
+from datetime import datetime
+
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
@@ -13,31 +16,11 @@ from selenium.webdriver.common.by import By
 from config_manager import SEFAZConfig
 from driver_manager import GerenciadorDriver
 from constants import SELECTORS, TIMEOUTS, SEFAZ_LOGIN_URL, SEFAZ_DASHBOARD_URL, SEFAZ_ACESSO_RESTRITO_URL
+from fluxo_utils import DetectorMudancas, GerenciadorWaitInteligente, VerificadorEstado
+
+from retry_manager import gerenciador_retry
 
 logger = logging.getLogger(__name__)
-
-
-class GerenciadorRetry:
-    """Sistema de retry simples"""
-    
-    def executar_com_retry(self, funcao, max_tentativas=3, delay=2, nome_operacao="Operação"):
-        ultima_excecao = None
-        for tentativa in range(1, max_tentativas + 1):
-            try:
-                logger.debug(f"{nome_operacao} - Tentativa {tentativa}/{max_tentativas}")
-                return funcao()
-            except Exception as e:
-                ultima_excecao = e
-                if tentativa == max_tentativas:
-                    logger.error(f"Falha após {max_tentativas} tentativas em {nome_operacao}: {e}")
-                    break
-                logger.info(f"Tentativa {tentativa} falhou, retry em {delay}s")
-                time.sleep(delay)
-        raise ultima_excecao
-
-
-gerenciador_retry = GerenciadorRetry()
-
 
 class AutomatorSEFAZ:
     """
@@ -47,8 +30,18 @@ class AutomatorSEFAZ:
     
     def __init__(self):
         self.gerenciador_driver = GerenciadorDriver()
-        self.wait: Optional[WebDriverWait] = None
-        self.config: Optional[SEFAZConfig] = None
+        self.wait = None
+        self.config = None
+        self.detector_mudancas = None
+        self.wait_inteligente = None
+        self.verificador_estado = None
+        
+        self.estatisticas_fluxo = {
+            'inicio_execucao': None,
+            'etapas_executadas': 0,
+            'etapas_com_erro': 0,
+            'tempos_etapas': {}
+        }
         
         self.timeouts = {
             'page_load': 3,
@@ -76,11 +69,18 @@ class AutomatorSEFAZ:
             driver = self.gerenciador_driver.configurar_driver()
             if not driver:
                 return False
+                
             self.wait = WebDriverWait(driver, self.timeouts['element_wait'])
-            logger.info("WebDriver configurado")
+            
+            # ✅ NOVO: Inicializar utilitários otimizados
+            self.detector_mudancas = DetectorMudancas(driver)
+            self.wait_inteligente = GerenciadorWaitInteligente(driver)
+            self.verificador_estado = VerificadorEstado(driver)
+            
+            logger.info("WebDriver e utilitários otimizados configurados")
             return True
         except Exception as e:
-            logger.error(f"Erro: {e}")
+            logger.error(f"Erro inicializacao: {e}")
             return False
     
     @property
@@ -88,30 +88,86 @@ class AutomatorSEFAZ:
         return self.gerenciador_driver.driver
     
     def executar_fluxo(self) -> bool:
-        logger.info("Iniciando fluxo de automacao")
-        inicio_total = time.time()
+        self.estatisticas_fluxo['inicio_execucao'] = datetime.now()
+        logger.info("Iniciando fluxo de automação")
+        logger.info(f"Total de etapas: {len(self.etapas_fluxo)}")
         
         try:
             for nome_etapa, funcao_etapa, descricao in self.etapas_fluxo:
-                inicio_etapa = time.time()
-                logger.info(f"Executando: {descricao}")
+                inicio_etapa = datetime.now()
+                logger.info(f"Executando etapa: {descricao}")
                 
-                if not funcao_etapa():
-                    logger.error(f"Falha: {nome_etapa}")
-                    self._mostrar_mensagem_final(False)
+                sucesso_etapa = funcao_etapa()
+                tempo_etapa = (datetime.now() - inicio_etapa).total_seconds()
+                
+                self.estatisticas_fluxo['tempos_etapas'][nome_etapa] = tempo_etapa
+                
+                if not sucesso_etapa:
+                    self.estatisticas_fluxo['etapas_com_erro'] += 1
+                    logger.error(f"Falha na etapa: {nome_etapa} ({tempo_etapa:.1f}s)")
+                    self._log_estatisticas_parciais()
                     return False
                 
-                tempo_etapa = time.time() - inicio_etapa
-                logger.info(f"Etapa concluida em {tempo_etapa:.1f}s")
+                self.estatisticas_fluxo['etapas_executadas'] += 1
+                logger.info(f"Etapa concluída: {tempo_etapa:.1f}s")
             
-            tempo_total = time.time() - inicio_total
-            self._mostrar_mensagem_final(True, tempo_total)
+            self._log_estatisticas_finais()
             return True
             
         except Exception as e:
-            logger.error(f"Erro: {e}")
-            self._mostrar_mensagem_final(False)
+            logger.error(f"Erro não esperado no fluxo: {e}")
+            self._log_estatisticas_parciais()
             return False
+
+    def _log_estatisticas_parciais(self):
+        tempo_total = (datetime.now() - self.estatisticas_fluxo['inicio_execucao']).total_seconds()
+        
+        logger.info("=" * 50)
+        logger.info("ESTATÍSTICAS PARCIAIS - FLUXO INTERROMPIDO")
+        logger.info("=" * 50)
+        logger.info(f"Tempo total: {tempo_total:.1f}s")
+        logger.info(f"Etapas executadas: {self.estatisticas_fluxo['etapas_executadas']}/{len(self.etapas_fluxo)}")
+        logger.info(f"Etapas com erro: {self.estatisticas_fluxo['etapas_com_erro']}")
+        
+        # Mostrar tempos das etapas concluídas
+        if self.estatisticas_fluxo['tempos_etapas']:
+            logger.info("Tempos das etapas concluídas:")
+            for etapa, tempo in self.estatisticas_fluxo['tempos_etapas'].items():
+                logger.info(f"  {etapa}: {tempo:.1f}s")
+
+    def _log_estatisticas_finais(self):
+        tempo_total = (datetime.now() - self.estatisticas_fluxo['inicio_execucao']).total_seconds()
+        stats_retry = gerenciador_retry.obter_estatisticas()
+        
+        logger.info("=" * 50)
+        logger.info("ESTATÍSTICAS DA EXECUÇÃO")
+        logger.info("=" * 50)
+        logger.info(f"Tempo total: {tempo_total:.1f}s")
+        logger.info(f"Etapas executadas: {self.estatisticas_fluxo['etapas_executadas']}/{len(self.etapas_fluxo)}")
+        logger.info(f"Etapas com erro: {self.estatisticas_fluxo['etapas_com_erro']}")
+        
+        # Tempos por etapa
+        logger.info("-" * 30)
+        logger.info("TEMPOS POR ETAPA:")
+        for nome_etapa, funcao_etapa, descricao in self.etapas_fluxo:
+            if nome_etapa in self.estatisticas_fluxo['tempos_etapas']:
+                tempo = self.estatisticas_fluxo['tempos_etapas'][nome_etapa]
+                logger.info(f"  {descricao}: {tempo:.1f}s")
+        
+        # Estatísticas de retry
+        logger.info("-" * 30)
+        logger.info("ESTATÍSTICAS DE RETRY:")
+        logger.info(f"  Total operações: {stats_retry['total_operacoes']}")
+        logger.info(f"  Operações com retry: {stats_retry['operacoes_com_retry']}")
+        logger.info(f"  Total tentativas: {stats_retry['total_tentativas']}")
+        logger.info(f"  Sucessos após retry: {stats_retry['sucessos_apos_retry']}")
+        
+        # Eficiência
+        if stats_retry['total_operacoes'] > 0:
+            eficiencia = (stats_retry['total_operacoes'] / stats_retry['total_tentativas']) * 100
+            logger.info(f"  Eficiência: {eficiencia:.1f}%")
+        
+        logger.info("=" * 50)
     
     def _mostrar_mensagem_final(self, sucesso: bool, tempo_total: float = 0):
         print("\n" + "="*70)
@@ -127,12 +183,37 @@ class AutomatorSEFAZ:
         logger.info("Fazendo login no portal")
         
         def tentar_login():
+            url_anterior = self.driver.current_url
             self.driver.get(SEFAZ_LOGIN_URL)
-            time.sleep(self.timeouts['page_load'])
             
-            campo_usuario = self.driver.find_element(By.ID, "username")
-            campo_senha = self.driver.find_element(By.ID, "password")
-            botao_login = self.driver.find_element(By.ID, "btnAuthenticate")
+            self.detector_mudancas.aguardar_carregamento()
+            
+            campo_usuario = self.wait_inteligente.aguardar_elemento_ou_alternativas(
+                (By.ID, "username"),
+                (By.NAME, "username"),
+                (By.XPATH, "//input[@type='text']")
+            )
+            
+            if not campo_usuario:
+                campo_usuario = self.driver.find_element(By.ID, "username")
+            
+            campo_senha = self.wait_inteligente.aguardar_elemento_ou_alternativas(
+                (By.ID, "password"), 
+                (By.NAME, "password"),
+                (By.XPATH, "//input[@type='password']")
+            )
+            
+            if not campo_senha:
+                campo_senha = self.driver.find_element(By.ID, "password")
+            
+            botao_login = self.wait_inteligente.aguardar_elemento_ou_alternativas(
+                (By.ID, "btnAuthenticate"),
+                (By.XPATH, "//button[contains(text(), 'Entrar')]"),
+                (By.XPATH, "//input[@type='submit']")
+            )
+            
+            if not botao_login:
+                botao_login = self.driver.find_element(By.ID, "btnAuthenticate")
             
             campo_usuario.clear()
             campo_usuario.send_keys(self.config.usuario)
@@ -141,7 +222,18 @@ class AutomatorSEFAZ:
             botao_login.click()
             
             time.sleep(self.timeouts['login_wait'])
-            return True
+            
+            # Verificar se houve mudança na URL (indicativo de sucesso)
+            mudanca, url_atual = self.detector_mudancas.verificar_mudanca_url(url_anterior)
+            if mudanca:
+                logger.info(f"Mudança de página detectada após login: {url_atual}")
+            
+            if self.verificador_estado.esta_na_pagina_login():
+                logger.warning("Ainda na página de login - possível falha")
+            else:
+                logger.info("Possível sucesso no login - saiu da página de login")
+            
+            return True 
         
         try:
             return gerenciador_retry.executar_com_retry(
@@ -151,7 +243,7 @@ class AutomatorSEFAZ:
                 nome_operacao="Login Portal"
             )
         except Exception as e:
-            logger.error(f"Erro login: {e}")
+            logger.error(f"Falha no login: {e}")
             return False
     
     def _aguardar_dashboard(self) -> bool:
@@ -164,87 +256,57 @@ class AutomatorSEFAZ:
         return True
     
     def _clicar_acesso_restrito(self) -> bool:
+        """Clicar em Acesso Restrito com fallbacks inteligentes."""
         logger.info("Clicando em Acesso Restrito")
         
         def tentar_clicar():
             time.sleep(3)
-            logger.info(f"URL atual: {self.driver.current_url}")
+            self.detector_mudancas.aguardar_carregamento()
             
-            seletores_acesso = [
+            # ✅ NOVO: Wait inteligente para elemento de acesso restrito
+            link_acesso = self.wait_inteligente.aguardar_elemento_ou_alternativas(
                 (By.XPATH, "//h3[contains(text(), 'Acesso Restrito')]"),
                 (By.XPATH, "//a[contains(@href, 'NETACCESS/default.asp')]"),
                 (By.XPATH, "//a[@target='_blank' and contains(@href, 'NETACCESS')]"),
                 (By.XPATH, "//a[contains(@class, 'dashboard-sistemas-item')]"),
                 (By.XPATH, "//a[contains(@href, 'NETACCESS') and contains(@title, 'Acessar')]"),
                 (By.XPATH, "//h3[contains(text(), 'Acesso Restrito')]/ancestor::a"),
-            ]
-            
-            link_acesso = None
-            for i, seletor in enumerate(seletores_acesso):
-                try:
-                    logger.info(f"Tentativa {i+1}: {seletor}")
-                    link_acesso = self.driver.find_element(*seletor)
-                    logger.info(f"Encontrado com: {seletor}")
-                    
-                    try:
-                        href = link_acesso.get_attribute('href')
-                        texto = link_acesso.text
-                        logger.info(f"href: {href}")
-                        logger.info(f"texto: {texto}")
-                    except:
-                        pass
-                    
-                    break
-                except Exception as e:
-                    continue
+            )
             
             if not link_acesso:
-                logger.error("Nenhum seletor funcionou")
+                link_acesso = self.wait_inteligente.buscar_elementos_similares("Acesso Restrito")
                 
-                logger.info("Procurando elementos relacionados...")
-                try:
-                    elementos_acesso = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'Acesso') or contains(text(), 'Restrito')]")
-                    logger.info(f"Elementos com Acesso ou Restrito: {len(elementos_acesso)}")
-                    
-                    for elem in elementos_acesso[:10]:
-                        try:
-                            tag = elem.tag_name
-                            texto = elem.text.strip()
-                            if texto:
-                                logger.info(f"{tag}: '{texto}'")
-                        except:
-                            pass
-                except Exception as e:
-                    logger.error(f"Erro no debug: {e}")
-                
-                return False
+            if not link_acesso:
+                logger.warning("Usando fallback manual para Acesso Restrito")
+                for seletor in [
+                    (By.XPATH, "//h3[contains(text(), 'Acesso Restrito')]"),
+                    (By.XPATH, "//a[contains(@href, 'NETACCESS/default.asp')]"),
+                ]:
+                    try:
+                        link_acesso = self.driver.find_element(*seletor)
+                        break
+                    except:
+                        continue
+            
+            if not link_acesso:
+                raise Exception("Nenhum seletor de acesso restrito funcionou")
             
             aba_original = self.driver.current_window_handle
-            logger.info(f"Aba original: {aba_original}")
-            
-            logger.info("Clicando no link...")
             self.driver.execute_script("arguments[0].click();", link_acesso)
-            logger.info("Clicou via JavaScript")
-            
-            logger.info("Aguardando nova aba...")
             time.sleep(5)
             
             abas = self.driver.window_handles
-            logger.info(f"Abas abertas: {len(abas)}")
-            
             if len(abas) > 1:
                 nova_aba = abas[-1]
                 self.driver.switch_to.window(nova_aba)
                 logger.info("Mudou para nova aba")
-                logger.info(f"URL nova aba: {self.driver.current_url}")
                 
-                if "netaccess" in self.driver.current_url.lower():
-                    logger.info("ACESSO RESTRITO CONSEGUIDO!")
+                if self.verificador_estado.esta_no_acesso_restrito():
+                    logger.info("Acesso restrito verificado com sucesso")
                 else:
-                    logger.warning(f"URL inesperada: {self.driver.current_url}")
+                    logger.warning("Possivelmente não está no acesso restrito")
             else:
                 logger.info("Nenhuma nova aba aberta")
-                logger.info(f"Permaneceu em: {self.driver.current_url}")
             
             return True
         
@@ -256,7 +318,7 @@ class AutomatorSEFAZ:
                 nome_operacao="Clicar Acesso Restrito"
             )
         except Exception as e:
-            logger.error(f"Erro critico: {e}")
+            logger.error(f"Falha ao acessar restrito: {e}")
             return False
     
     def _acessar_baixar_xml(self) -> bool:

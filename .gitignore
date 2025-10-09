@@ -4,3 +4,5 @@ config.py
 __pycache__/
 *.log
 .vscode/
+tempCodeRunnerFile.py
+*.temp.py

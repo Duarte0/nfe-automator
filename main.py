@@ -9,7 +9,9 @@ from datetime import datetime
 
 from config_manager import gerenciador_config
 from sefaz_automator import AutomatorSEFAZ
+from retry_manager import gerenciador_retry  # ✅ ADICIONAR ESTE IMPORT
 
+logger = logging.getLogger(__name__)
 
 def configurar_logging():
     """Configura logging simples e direto."""
@@ -42,7 +44,6 @@ def configurar_logging():
     except Exception as e:
         print(f"Erro configuracao logging: {e}")
         return False
-
 
 def main():
     """Função principal simplificada."""
@@ -98,6 +99,16 @@ def main():
         else:
             print("ERRO: Processo interrompido")
             print("Consulte o arquivo de log para detalhes")
+        
+        # ✅ CORREÇÃO: Usar gerenciador_retry importado
+        try:
+            stats_retry = gerenciador_retry.obter_estatisticas()
+            print(f"Resumo: {stats_retry['total_operacoes']} operacoes")
+            print(f"Tentativas: {stats_retry['total_tentativas']}")
+            print(f"Retrys bem-sucedidos: {stats_retry['sucessos_apos_retry']}")
+        except Exception as e:
+            print(f"Estatisticas indisponiveis: {e}")
+        
         print(f"Fim: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
         print("="*50)
         
@@ -121,7 +132,6 @@ def main():
             input("\nPressione ENTER para sair...")
         except:
             pass
-
 
 if __name__ == "__main__":
     sys.exit(main())

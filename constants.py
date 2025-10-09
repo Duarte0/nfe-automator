@@ -74,3 +74,11 @@ Não foi possível configurar o WebDriver.
 ====================================
 """
 }
+
+RETRY_CONFIG = {
+    'login': 2,
+    'navegacao': 3, 
+    'iframe': 3,
+    'elemento': 3,
+    'popup': 2
+}
