@@ -55,7 +55,7 @@ class GerenciadorDriver:
     
     def _configurar_driver_manual(self) -> Optional[webdriver.Chrome]:
         try:
-            logger.info("🔧 Tentando configuração manual...")
+            logger.info("Tentando configuracao manual...")
             
             caminhos_driver = [
                 "./drivers/chromedriver.exe",
@@ -91,7 +91,7 @@ class GerenciadorDriver:
             from webdriver_manager.chrome import ChromeDriverManager
             from webdriver_manager.core.os_manager import ChromeType
             
-            logger.info("Tentando configuração automática com WebDriver Manager...")
+            logger.info("Tentando configuracao automatica com WebDriver Manager...")
             
             service = Service(
                 ChromeDriverManager(chrome_type=ChromeType.GOOGLE).install()
@@ -130,6 +130,7 @@ class GerenciadorDriver:
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--window-size=1200,800")
         
+        # REMOVER configuracao de download - usar pasta padrao do sistema
         options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
         options.add_experimental_option('useAutomationExtension', False)
         
@@ -140,26 +141,26 @@ class GerenciadorDriver:
             try:
                 self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             except Exception as e:
-                logger.debug(f"⚠️ Configuração stealth falhou: {e}")
+                logger.debug(f"Configuracao stealth falhou: {e}")
     
     def _mostrar_erro_driver(self):
         erro_msg = """
-     ERRO DE CONFIGURAÇÃO DO NAVEGADOR
+     ERRO DE CONFIGURACAO DO NAVEGADOR
 ====================================
-Não foi possível configurar o WebDriver.
+Nao foi possivel configurar o WebDriver.
 
-    SOLUÇÕES:
+    SOLUCOES:
 1. Baixe o ChromeDriver em: https://chromedriver.chromium.org/
 2. Coloque na pasta 'drivers/chromedriver.exe'
 3. Ou execute: pip install webdriver-manager
-4. Verifique se o Google Chrome está instalado
+4. Verifique se o Google Chrome esta instalado
 ====================================
 """
         print(erro_msg)
     
     def fechar(self):
-        logger.info("MANTENDO NAVEGADOR ABERTO PARA INSPEÇÃO")
-        logger.info("O navegador permanecerá aberto para verificação")
+        logger.info("MANTENDO NAVEGADOR ABERTO PARA INSPECAO")
+        logger.info("O navegador permanecera aberto para verificacao")
         logger.info("Verifique os resultados manualmente")
         
         self.driver = None
