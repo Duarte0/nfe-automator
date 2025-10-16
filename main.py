@@ -1,5 +1,5 @@
 """
-Ponto de entrada principal - Versão Otimizada
+Ponto de entrada principal
 """
 
 import sys
