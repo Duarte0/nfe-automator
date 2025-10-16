@@ -4,7 +4,7 @@ Automação SEFAZ - Download XML NFe
 
 import time
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 from datetime import datetime
 
@@ -20,6 +20,8 @@ from .fluxo_utils import DetectorMudancas, GerenciadorWaitInteligente, Verificad
 
 from .retry_manager import gerenciador_retry
 from .download_manager import GerenciadorDownload
+from .multi_ie_manager import GerenciadorMultiplasIEs
+from .ie_processor import ProcessadorPlanilhaIEs
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,8 @@ class AutomatorSEFAZ:
         self.wait_inteligente = None
         self.verificador_estado = None
         self.gerenciador_download = None
+        self.seletor_baixar_xml_cache = None
+        self.processador_ies = ProcessadorPlanilhaIEs()
         
         self.estatisticas_fluxo = {
             'inicio_execucao': None,
@@ -55,9 +59,7 @@ class AutomatorSEFAZ:
             ("ACESSAR_BAIXAR_XML", self._acessar_baixar_xml, "Encontrar e clicar em Baixar XML NFE"),
             ("AGUARDAR_POPUP_LOGIN", self._aguardar_e_preencher_popup, "Aguardar e preencher popup de login"),
             ("CLICAR_BAIXAR_XML_APOS_LOGIN", self._clicar_baixar_xml_apos_login, "Clicar novamente após login"),
-            ("PREENCHER_FORMULARIO", self._preencher_formulario_consulta, "Preencher formulário de consulta"),
-            ("EXECUTAR_CONSULTA", self._executar_consulta, "Executar pesquisa"),
-            ("DOWNLOAD_LOTE", self._download_lote, "Download em lote"),
+            ("PROCESSAR_MULTIPLAS_IES", self._processar_multiplas_ies, "Processar todas as IEs"),
         ]
     
     def inicializar(self, config: SEFAZConfig) -> bool:
@@ -319,65 +321,25 @@ class AutomatorSEFAZ:
         def tentar_acessar():
             logger.info("Procurando iframe...")
             
-            seletores_iframe = [
-                (By.ID, "iNetaccess"),
-                (By.NAME, "iNetaccess"),
-                (By.XPATH, "//iframe[contains(@src, 'main.asp')]"),
-                (By.TAG_NAME, "iframe"),
-            ]
-            
-            iframe_encontrado = None
-            for seletor in seletores_iframe:
-                try:
-                    iframe_encontrado = self.driver.find_element(*seletor)
-                    logger.info(f"IFRAME ENCONTRADO: {seletor[1]}")
-                    break
-                except:
-                    continue
-            
-            if not iframe_encontrado:
+            try:
+                iframe = self.driver.find_element(By.ID, "iNetaccess")
+                self.driver.switch_to.frame(iframe)
+                logger.info("Dentro do iframe!")
+            except:
                 logger.error("IFRAME NAO ENCONTRADO!")
                 return False
             
-            logger.info("Entrando no iframe...")
-            self.driver.switch_to.frame(iframe_encontrado)
-            logger.info("Dentro do iframe!")
+            logger.info("Buscando Baixar XML NFE...")
             
-            logger.info("Buscando Baixar XML NFE dentro do iframe...")
-            
-            seletores_link = [
-                (By.XPATH, "//a[@onclick=\"OpenUrl('https://nfeweb.sefaz.go.gov.br/nfeweb/sites/nfe/consulta-notas-recebidas', false, '', 'False', 'true')\"]"),
-                (By.XPATH, "//a[text()='Baixar XML NFE']"),
-                (By.XPATH, "//a[contains(text(), 'Baixar XML NFE')]"),
-                (By.XPATH, "//a[contains(@href, 'javascript:void') and contains(text(), 'Baixar XML')]"),
-                (By.XPATH, "//a[contains(., 'Baixar XML')]"),
-            ]
-            
-            link_encontrado = None
-            for i, seletor in enumerate(seletores_link):
-                try:
-                    logger.info(f"Tentativa {i+1}: {seletor[1]}")
-                    link_encontrado = self.driver.find_element(*seletor)
-                    logger.info("LINK ENCONTRADO dentro do iframe!")
-                    
-                    try:
-                        texto = link_encontrado.text
-                        onclick = link_encontrado.get_attribute('onclick')
-                        logger.info(f"Texto: '{texto}'")
-                        logger.info(f"onClick: {onclick}")
-                    except:
-                        pass
-                    
-                    break
-                except Exception as e:
-                    continue
+            # USAR MÉTODO PRIORITÁRIO
+            link_encontrado = self._encontrar_link_baixar_xml()
             
             if not link_encontrado:
                 logger.error("Link nao encontrado dentro do iframe")
                 self.driver.switch_to.default_content()
                 return False
             
-            logger.info("Clicando no link Baixar XML NFE...")
+            logger.info("Clicando no link...")
             try:
                 self.driver.execute_script("arguments[0].click();", link_encontrado)
                 logger.info("Clicado via JavaScript")
@@ -389,35 +351,24 @@ class AutomatorSEFAZ:
             logger.info("Aguardando acao do clique...")
             time.sleep(5)
             
+            # Verificar se redirecionou
             try:
                 current_url = self.driver.current_url
-                logger.info(f"URL atual: {current_url}")
-                
                 if "consulta-notas-recebidas" in current_url:
                     logger.info("REDIRECIONADO PARA PAGINA DE CONSULTA!")
                     return True
                 else:
-                    logger.info("Permaneceu na mesma pagina - possivelmente popup aberto")
+                    logger.info("Permaneceu na mesma pagina")
                     return True
-                    
-            except Exception as e:
-                logger.warning(f"Erro ao verificar URL: {e}")
-                return True
-                
-        try:
-            return gerenciador_retry.executar_com_retry(
-                tentar_acessar,
-                max_tentativas=3,
-                delay=2,
-                nome_operacao="Acessar Baixar XML"
-            )
-        except Exception as e:
-            logger.error(f"Erro critico no acesso ao iframe: {e}")
-            try:
-                self.driver.switch_to.default_content()
             except:
-                pass
-            return False
+                return True
+        
+        return gerenciador_retry.executar_com_retry(
+            tentar_acessar,
+            max_tentativas=3,
+            delay=2,
+            nome_operacao="Acessar Baixar XML"
+        )
     
     def _aguardar_e_preencher_popup(self) -> bool:
         logger.info("Aguardando popup de login...")
@@ -521,75 +472,66 @@ class AutomatorSEFAZ:
         def tentar_clicar_apos_login():
             time.sleep(3)
             
-            logger.info("Entrando novamente no iframe apos login...")
-            
             try:
                 iframe = self.driver.find_element(By.ID, "iNetaccess")
                 self.driver.switch_to.frame(iframe)
-                logger.info("DENTRO DO IFRAME NOVAMENTE!")
-            except Exception as e:
-                logger.error(f"Nao conseguiu entrar no iframe apos login: {e}")
+            except:
                 return False
             
-            logger.info("Procurando link novamente apos login...")
-            
-            seletores_link = [
-                (By.XPATH, "//a[@onclick=\"OpenUrl('https://nfeweb.sefaz.go.gov.br/nfeweb/sites/nfe/consulta-notas-recebidas', false, '', 'False', 'true')\"]"),
-                (By.XPATH, "//a[text()='Baixar XML NFE']"),
-                (By.XPATH, "//a[contains(text(), 'Baixar XML NFE')]"),
-            ]
-            
-            link_encontrado = None
-            for seletor in seletores_link:
-                try:
-                    link_encontrado = self.driver.find_element(*seletor)
-                    logger.info("Link encontrado apos login!")
-                    break
-                except:
-                    continue
+            # USAR MÉTODO PRIORITÁRIO
+            link_encontrado = self._encontrar_link_baixar_xml()
             
             if not link_encontrado:
-                logger.error("Nao encontrou link apos login")
                 self.driver.switch_to.default_content()
                 return False
             
-            logger.info("Clicando no link apos login...")
             try:
                 self.driver.execute_script("arguments[0].click();", link_encontrado)
-                logger.info("Clicado via JavaScript apos login")
-            except Exception as e:
-                logger.error(f"Erro ao clicar apos login: {e}")
+            except:
                 self.driver.switch_to.default_content()
                 return False
             
             self.driver.switch_to.default_content()
-            logger.info("Aguardando redirecionamento apos segundo clique...")
             time.sleep(5)
-            
-            current_url = self.driver.current_url
-            logger.info(f"URL apos segundo clique: {current_url}")
-            
-            if "consulta-notas-recebidas" in current_url:
-                logger.info("REDIRECIONADO PARA FORMULARIO DE CONSULTA!")
-                return True
-            else:
-                logger.info("Nao redirecionado - possivelmente ja esta na pagina correta")
-                return True
+            return True
+        
+        return gerenciador_retry.executar_com_retry(
+            tentar_clicar_apos_login,
+            max_tentativas=3,
+            delay=2,
+            nome_operacao="Clicar Apos Login"
+        )
+        
+    def _encontrar_link_baixar_xml(self):
+        if self.seletor_baixar_xml_cache:
+            try:
+                elemento = self.driver.find_element(*self.seletor_baixar_xml_cache)
+                logger.info(f"Usando seletor em cache: {self.seletor_baixar_xml_cache[1]}")
+                return elemento
+            except:
+                self.seletor_baixar_xml_cache = None 
+        
+        seletores_prioridade = [
+            (By.XPATH, "//a[@onclick=\"OpenUrl('https://nfeweb.sefaz.go.gov.br/nfeweb/sites/nfe/consulta-notas-recebidas', false, '', 'False', 'true')\"]"),
+            (By.XPATH, "//a[text()='Baixar XML NFE']"),
+            (By.XPATH, "//a[contains(text(), 'Baixar XML NFE')]"),
+        ]
+        
+        for seletor in seletores_prioridade:
+            try:
+                elemento = self.driver.find_element(*seletor)
+                logger.info(f"Seletor encontrado: {seletor[1]}")
+                self.seletor_baixar_xml_cache = seletor 
+                return elemento
+            except:
+                continue
         
         try:
-            return gerenciador_retry.executar_com_retry(
-                tentar_clicar_apos_login,
-                max_tentativas=3,
-                delay=2,
-                nome_operacao="Clicar Apos Login"
-            )
-        except Exception as e:
-            logger.error(f"Erro no segundo clique: {e}")
-            try:
-                self.driver.switch_to.default_content()
-            except:
-                pass
-            return False
+            elemento = self.driver.find_element(By.XPATH, "//a[contains(., 'Baixar XML')]")
+            logger.info("Usando fallback genérico")
+            return elemento
+        except:
+            return None
     
     def _preencher_formulario_consulta(self) -> bool:
         logger.info("Preenchendo formulario dentro do iframe...")
@@ -597,6 +539,11 @@ class AutomatorSEFAZ:
         def tentar_preencher():
             time.sleep(3)
             
+            try:
+                self.driver.switch_to.default_content()
+            except:
+                pass
+                
             logger.info("Entrando no iframe para preencher formulario...")
             
             try:
@@ -607,11 +554,10 @@ class AutomatorSEFAZ:
                 logger.error(f"Nao conseguiu entrar no iframe do formulario: {e}")
                 return False
             
-            current_url = self.driver.current_url
-            logger.info(f"URL dentro do iframe: {current_url}")
-            
             try:
-                campo_teste = self.driver.find_element(By.ID, "cmpDataInicial")
+                campo_teste = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.ID, "cmpDataInicial"))
+                )
                 logger.info("FORMULARIO ENCONTRADO DENTRO DO IFRAME!")
             except:
                 logger.error("Formulario nao encontrado dentro do iframe")
@@ -637,8 +583,8 @@ class AutomatorSEFAZ:
                 logger.info("Inscricao estadual preenchida")
                 
                 seletor_modelo = Select(self.driver.find_element(By.ID, "cmpModelo"))
-                seletor_modelo.select_by_value("55")
-                logger.info("Modelo selecionado (55 - NFe)")
+                seletor_modelo.select_by_value("-")
+                logger.info("Modelo selecionado (Todos)")
                 
                 radio_entrada = self.driver.find_element(By.XPATH, "//input[@value='0' and @name='cmpTipoNota']")
                 if not radio_entrada.is_selected():
@@ -657,14 +603,16 @@ class AutomatorSEFAZ:
                 
                 logger.info("FORMULARIO PREENCHIDO COM SUCESSO!")
                 
-                self.driver.switch_to.default_content()
-                
-                return self._captcha_manual()
-                
             except Exception as e:
                 logger.error(f"Erro ao preencher formulario: {e}")
                 self.driver.switch_to.default_content()
                 return False
+            
+            logger.info("SOLICITANDO RESOLUCAO DO CAPTCHA...")
+            self.driver.switch_to.default_content()
+            sucesso_captcha = self._captcha_manual()
+            
+            return sucesso_captcha
         
         try:
             return gerenciador_retry.executar_com_retry(
@@ -680,35 +628,33 @@ class AutomatorSEFAZ:
             except:
                 pass
             return False
-    
+
     def _captcha_manual(self) -> bool:
-        logger.info("CAPTCHA REQUERIDO")
+        """CAPTCHA REAL - aguarda resolução manual"""
+        logger.info("CAPTCHA CLOUDFLARE REQUERIDO")
+        
+        print("\n" + "="*60)
+        print("CAPTCHA REQUERIDO - RESOLUÇÃO MANUAL")
+        print("="*60)
+        print("1. Resolva o CAPTCHA no navegador")
+        print("2. Aguarde o processamento completo")
+        print("3. A página deve recarregar automaticamente")
+        print("4. Pressione ENTER apenas quando o CAPTCHA estiver resolvido")
+        print("="*60)
         
         try:
-            iframe = self.driver.find_element(By.ID, "iNetaccess")
-            self.driver.switch_to.frame(iframe)
-            logger.info("Dentro do iframe para captcha")
-        except:
-            logger.info("Nao conseguiu entrar no iframe para captcha")
-        
-        print("\n" + "="*50)
-        print("RESOLVA O CAPTCHA NO NAVEGADOR!")
-        print("="*50)
-        print("1. Resolva o CAPTCHA na janela do Chrome")
-        print("2. Aguarde o processamento") 
-        print("3. Volte e pressione ENTER")
-        print("="*50)
-        
-        try:
-            self.driver.switch_to.default_content()
+            # Aguardar input manual - usuário deve confirmar resolução
+            input("Pressione ENTER após resolver o CAPTCHA: ")
             
-            input("\nENTER apos resolver o CAPTCHA: ")
-            logger.info("Captcha resolvido")
-            time.sleep(2)
+            # Aguardar processamento pós-CAPTCHA
+            time.sleep(3)
+            
+            logger.info("CAPTCHA resolvido - continuando fluxo")
             return True
-        except:
-            logger.info("Continuando...")
-            return True
+            
+        except Exception as e:
+            logger.error(f"Erro no CAPTCHA manual: {e}")
+            return False
     
     def _executar_consulta(self) -> bool:
         logger.info("Executando consulta dentro do iframe...")
@@ -786,10 +732,13 @@ class AutomatorSEFAZ:
                 logger.error("Gerenciador download não inicializado")
                 return False
             
-            resultado = self.gerenciador_download.processar_download_lote()
+            from datetime import datetime
+            data_referencia = datetime.strptime(self.config.data_inicio, "%d/%m/%Y")
             
-            # Log direto e simples
+            resultado = self.gerenciador_download.processar_download_lote(self.config.inscricao_estadual, data_referencia)
+            
             logger.info(f"Resumo: {resultado.total_baixado}/{resultado.total_encontrado} notas")
+            logger.info(f"Arquivos salvos em: {resultado.caminho_download}")
             
             if resultado.erros:
                 logger.error(f"Erro: {resultado.erros[0]}")
@@ -801,8 +750,262 @@ class AutomatorSEFAZ:
             logger.error(f"Erro download lote: {e}")
             return False
     
+    def _validar_apos_captcha(self) -> bool:
+        logger.info("Validando estado pós-CAPTCHA")
+        
+        try:
+            current_url = self.driver.current_url
+            if "challenges.cloudflare.com" in current_url:
+                logger.error("Ainda na página de CAPTCHA - não resolvido")
+                return False
+            
+            iframe = self.driver.find_element(By.ID, "iNetaccess")
+            self.driver.switch_to.frame(iframe)
+            
+            try:
+                self.driver.find_element(By.ID, "cmpDataInicial")
+                logger.info("Formulário carregado pós-CAPTCHA")
+                self.driver.switch_to.default_content()
+                return True
+            except:
+                logger.error("Formulário não encontrado pós-CAPTCHA")
+                self.driver.switch_to.default_content()
+                return False
+            
+        except Exception as e:
+            logger.error(f"Erro na validação pós-CAPTCHA: {e}")
+            return False
+        
+    def _validar_resultados_consulta(self) -> bool:
+        logger.info("Validando resultados da consulta")
+        
+        try:
+            if not self.gerenciador_download:
+                return False
+            
+            total_notas = self.gerenciador_download.contar_notas_tabela()
+            
+            if total_notas == 0:
+                logger.warning("Consulta não retornou notas - pulando download")
+                return True  
+            
+            logger.info(f"Consulta retornou {total_notas} notas")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Erro na validação de resultados: {e}")
+            return False
+        
+    def _download_unico_ie(self) -> bool:
+        logger.info("Iniciando download único para IE atual")
+        
+        try:
+            if not self.gerenciador_download:
+                return False
+            
+            total_notas = self.gerenciador_download.contar_notas_tabela()
+            
+            if total_notas == 0:
+                logger.info("Nenhuma nota para download - resultado válido")
+                return True 
+            
+            from datetime import datetime
+            data_referencia = datetime.strptime(self.config.data_inicio, "%d/%m/%Y")
+            
+            resultado = self.gerenciador_download.executar_fluxo_download_completo(
+                self.config.inscricao_estadual, 
+                data_referencia
+            )
+            
+            logger.info(f"Resumo único IE {self.config.inscricao_estadual}: {resultado.total_baixado} arquivo(s)")
+            
+            return True
+                
+        except Exception as e:
+            logger.error(f"Erro download único: {e}")
+            return False
+        
+    def _processar_multiplas_ies(self) -> bool:
+        logger.info("Iniciando processamento de múltiplas IEs")
+        
+        gerenciador_ies = GerenciadorMultiplasIEs()
+        gerenciador_ies.limpar_estado()
+        
+        ies_validas = self.processador_ies.carregar_ies_validas()
+        if not ies_validas:
+            logger.error("Nenhuma IE válida encontrada")
+            return False
+        
+        ies_teste = ies_validas[:2] 
+        logger.info(f"TESTE: Processando {len(ies_teste)} IEs")
+        
+        gerenciador_ies.adicionar_ies(ies_teste)
+        
+        total_processadas = 0
+        total_com_notas = 0
+        ie_atual = gerenciador_ies.obter_proxima_ie()
+        
+        while ie_atual:
+            estado_atual = gerenciador_ies.estados[ie_atual]
+            tentativa_numero = estado_atual.tentativas + 1
+            
+            logger.info(f"Processando IE: {ie_atual} (tentativa {tentativa_numero})")
+            gerenciador_ies.marcar_em_andamento(ie_atual)
+            
+            try:
+                self.config.inscricao_estadual = ie_atual
+                sucesso = self._executar_fluxo_individual_ie(ie_atual)
+                
+                if sucesso:
+                    # Encontrou notas e fez download
+                    gerenciador_ies.marcar_concluido(ie_atual)
+                    total_processadas += 1
+                    total_com_notas += 1
+                    logger.info(f"✅ IE {ie_atual} CONCLUÍDA - {tentativa_numero}ª tentativa")
+                else:
+                    # Não encontrou notas
+                    gerenciador_ies.marcar_pendente(ie_atual, "Nenhuma nota encontrada")
+                    total_processadas += 1
+                    logger.info(f"⏳ IE {ie_atual} PENDENTE - {tentativa_numero}ª tentativa (sem notas)")
+                
+            except Exception as e:
+                # Erro no processamento
+                gerenciador_ies.marcar_erro(ie_atual, str(e))
+                total_processadas += 1
+                logger.info(f"❌ IE {ie_atual} ERRO - {tentativa_numero}ª tentativa: {e}")
+            
+            time.sleep(2)
+            ie_atual = gerenciador_ies.obter_proxima_ie()
+        
+        # Relatório final
+        relatorio = gerenciador_ies.obter_relatorio()
+        logger.info("=" * 60)
+        logger.info("RELATÓRIO FINAL DO PROCESSAMENTO")
+        logger.info("=" * 60)
+        logger.info(f"Total de IEs processadas: {total_processadas}")
+        logger.info(f"IEs com notas (CONCLUÍDAS): {total_com_notas}")
+        logger.info(f"IEs sem notas (PENDENTES): {relatorio['pendentes']}")
+        logger.info(f"IEs com erro: {relatorio['erros']}")
+        logger.info("=" * 60)
+        
+        self._mostrar_relatorio_final(relatorio)
+        
+        return total_com_notas > 0
+
+    def _executar_fluxo_completo_ie(self, ie: str) -> bool:
+        """Executa o fluxo completo para uma IE específica"""
+        etapas_ie = [
+            ("PREENCHER_FORMULARIO", self._preencher_formulario_consulta, f"Preencher formulário {ie}"),
+            ("VALIDAR_CAPTCHA", self._validar_apos_captcha, f"Validar pós-CAPTCHA {ie}"),
+            ("EXECUTAR_CONSULTA", self._executar_consulta, f"Executar consulta {ie}"),
+            ("VALIDAR_RESULTADOS", self._validar_resultados_consulta, f"Validar resultados {ie}"),
+            ("DOWNLOAD_UNICO", self._download_unico_ie, f"Download único {ie}"),
+            ("VOLTAR_CONSULTA", self._voltar_pagina_consulta, f"Voltar para consulta"),
+        ]
+        
+        for nome_etapa, funcao_etapa, descricao in etapas_ie:
+            logger.info(f"Executando: {descricao}")
+            
+            sucesso_etapa = funcao_etapa()
+            if not sucesso_etapa:
+                logger.error(f"Falha na etapa {nome_etapa} para IE {ie}")
+                return False
+            
+            time.sleep(1)
+        
+        return True
+
+    def _voltar_pagina_consulta(self) -> bool:
+        logger.info("Verificando se precisa voltar para consulta...")
+        
+        try:
+            iframe = self.driver.find_element(By.ID, "iNetaccess")
+            self.driver.switch_to.frame(iframe)
+            
+            try:
+                botao_nova_consulta = self.driver.find_element(
+                    By.XPATH, "//button[contains(text(), 'Nova Consulta')]"
+                )
+                if botao_nova_consulta.is_displayed():
+                    botao_nova_consulta.click()
+                    logger.info("Voltou para página de consulta")
+                    self.driver.switch_to.default_content()
+                    time.sleep(2)
+                    return True
+                else:
+                    logger.info("Botão Nova Consulta não visível - já está na página de consulta")
+                    self.driver.switch_to.default_content()
+                    return True
+            except:
+                logger.info("Não está na página de resultados - já está na página de consulta")
+                self.driver.switch_to.default_content()
+                return True
+                
+        except Exception as e:
+            logger.info(f"Não precisa voltar - já está na página correta: {e}")
+            try:
+                self.driver.switch_to.default_content()
+            except:
+                pass
+            return True
+        
+    def _executar_fluxo_individual_ie(self, ie: str) -> bool:
+        logger.info(f"Iniciando fluxo individual para IE: {ie}")
+        
+        etapas_ie = [
+            ("PREENCHER_FORMULARIO", self._preencher_formulario_consulta, f"Preencher formulário {ie}"),
+            ("VALIDAR_CAPTCHA", self._validar_apos_captcha, f"Validar pós-CAPTCHA {ie}"),
+            ("EXECUTAR_CONSULTA", self._executar_consulta, f"Executar consulta {ie}"),
+            ("VALIDAR_RESULTADOS", self._validar_resultados_consulta, f"Validar resultados {ie}"),
+        ]
+        
+        for nome_etapa, funcao_etapa, descricao in etapas_ie:
+            logger.info(f"Executando: {descricao}")
+            
+            sucesso_etapa = funcao_etapa()
+            if not sucesso_etapa:
+                logger.error(f"Falha na etapa {nome_etapa} para IE {ie}")
+                return False
+            
+            time.sleep(1)
+        
+        total_notas = self.gerenciador_download.contar_notas_tabela()
+        
+        if total_notas > 0:
+            logger.info(f"Encontradas {total_notas} notas - executando download")
+            etapas_download = [
+                ("DOWNLOAD_UNICO", self._download_unico_ie, f"Download único {ie}"),
+                ("VOLTAR_CONSULTA", self._voltar_pagina_consulta, f"Voltar para consulta"),
+            ]
+            
+            for nome_etapa, funcao_etapa, descricao in etapas_download:
+                logger.info(f"Executando: {descricao}")
+                
+                sucesso_etapa = funcao_etapa()
+                if not sucesso_etapa:
+                    logger.error(f"Falha na etapa {nome_etapa} para IE {ie}")
+                    return False
+                
+                time.sleep(1)
+            
+            return True
+        else:
+            logger.info(f"Nenhuma nota encontrada para IE {ie} - mantendo como pendente")
+            return False
+
+    def _mostrar_relatorio_final(self, relatorio: Dict):
+        print("\n" + "="*60)
+        print("RELATÓRIO FINAL - PROCESSAMENTO")
+        print("="*60)
+        print(f"Total IEs: {relatorio['total']}")
+        print(f"Concluídas: {relatorio['concluidos']}")
+        print(f"Com erro: {relatorio['erros']}")
+        print(f"Progresso: {relatorio['progresso']}")
+        print("="*60)
+    
     def limpar_recursos(self):
         logger.info("Navegador mantido aberto")
         print("\n" + "="*60)
         print("Fluxo concluido - Navegador aberto para inspecao")
         print("="*60)
+        
