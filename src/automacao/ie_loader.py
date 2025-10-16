@@ -1,12 +1,12 @@
+
 import pandas as pd
 import logging
 from pathlib import Path
 from typing import List
-import re
 
 logger = logging.getLogger(__name__)
 
-class ProcessadorPlanilhaIEs:
+class CarregadorIEs:
     def __init__(self, caminho_planilha: str = "dados/empresas.xlsx"):
         self.caminho_planilha = Path(caminho_planilha)
     
