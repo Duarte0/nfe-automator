@@ -68,6 +68,8 @@ class GerenciadorWaitInteligente:
         except:
             pass
         return None
+    
+    
 
 
 class VerificadorEstado:    
