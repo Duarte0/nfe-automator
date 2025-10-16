@@ -9,33 +9,10 @@ from datetime import datetime
 
 from src.config import gerenciador_config
 from src.automacao import AutomatorSEFAZ
+from src.utils.login_helper import LoggingConfig
 
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-def configurar_logging():
-    try:
-        os.makedirs("logs", exist_ok=True)
-        
-        caminho_log = "logs/nfe_automation.log"
-        
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s | %(levelname)-8s | %(message)s',
-            handlers=[
-                logging.FileHandler(caminho_log, mode='w', encoding='utf-8'),
-                logging.StreamHandler(sys.stdout)
-            ]
-        )
-        
-        logging.getLogger('selenium').setLevel(logging.WARNING)
-        logging.getLogger('urllib3').setLevel(logging.WARNING)
-        
-        return True
-        
-    except Exception as e:
-        print(f"Erro configuracao logging: {e}")
-        return False
-    
 def limpar_logs_antigos(max_logs=5):
     try:
         logs_dir = "logs"
@@ -57,8 +34,9 @@ def main():
     
     limpar_logs_antigos(max_logs=3)
     
-    if not configurar_logging():
+    if not LoggingConfig.setup(log_file="logs/nfe_automation.log"):
         return 1
+    
     logger = logging.getLogger(__name__)
     
     print("\n" + "="*50)
