@@ -12,6 +12,7 @@ from .processador_ie import ProcessadorIE
 from .iframe_manager import GerenciadorIframe
 from .health_check import HealthCheckDriver
 from .validador_ie import ValidadorIE
+from .timeout_manager import TimeoutManager
 
 __all__ = [
     'AutomatorSEFAZ',
@@ -25,5 +26,6 @@ __all__ = [
     'ProcessadorIE',
     'GerenciadorIframe',
     'HealthCheckDriver',
-    'ValidadorIE'
+    'ValidadorIE',
+    'TimeoutManager'
 ]

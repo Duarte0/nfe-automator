@@ -9,6 +9,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+from .timeout_manager import TimeoutManager
+    
 logger = logging.getLogger(__name__)
 
 
@@ -42,11 +44,18 @@ class DetectorMudancas:
 
 class GerenciadorWaitInteligente:
     
-    def __init__(self, driver: WebDriver, timeout=10):
+    def __init__(self, driver: WebDriver, timeout_manager: TimeoutManager):
         self.driver = driver
-        self.wait = WebDriverWait(driver, timeout)
+        self.timeout_manager = timeout_manager
+        self._atualizar_wait()
+        
+    def _atualizar_wait(self):
+        """Atualiza wait com timeout atualizado"""
+        timeout = self.timeout_manager.get_timeout('element_wait')
+        self.wait = WebDriverWait(self.driver, timeout)
     
     def aguardar_elemento_ou_alternativas(self, *seletores):
+        self._atualizar_wait()
         for seletor in seletores:
             try:
                 logger.debug(f"Tentando seletor: {seletor}")
@@ -68,9 +77,6 @@ class GerenciadorWaitInteligente:
         except:
             pass
         return None
-    
-    
-
 
 class VerificadorEstado:    
     def __init__(self, driver: WebDriver):
