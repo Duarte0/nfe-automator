@@ -68,11 +68,12 @@ class GerenciadorDownload:
                     try:
                         linhas = self.driver.find_elements(By.XPATH, seletor)
                         if linhas:
-                            logger.info(f"Notas encontradas: {len(linhas)}")
                             return len(linhas)
                     except:
                         continue
                 return 0
+        except Exception:
+            return 0
                 
         except Exception as e:
             logger.warning(f"Erro ao contar notas: {e}")
@@ -196,15 +197,11 @@ class GerenciadorDownload:
         )
     
     def executar_fluxo_download_completo(self, ie: str, mes_referencia: datetime = None) -> ResultadoDownload:
-        logger.info(f"Iniciando download IE: {ie}")
+        tem_notas = self.contar_notas_tabela() > 0
         
-        total_notas = self.contar_notas_tabela()
-        logger.debug(f"Notas encontradas: {total_notas}")
-        
-        if total_notas == 0:
-            logger.info(f"Nenhuma nota para IE {ie}")
+        if not tem_notas:
             return ResultadoDownload(
-                total_encontrado=0, total_baixado=0, erros=["Nenhuma nota"],
+                total_encontrado=0, total_baixado=0, erros=["Sem notas"],
                 notas_baixadas=[], caminho_download=""
             )
         
@@ -216,25 +213,21 @@ class GerenciadorDownload:
                 self._processar_historico_downloads()):
                 
                 arquivos_baixados = self.organizar_arquivos_baixados(pasta_destino)
-                logger.info(f"Download concluído: {arquivos_baixados} arquivo(s)")
                 
                 return ResultadoDownload(
-                    total_encontrado=total_notas,
-                    total_baixado=arquivos_baixados,
+                    total_encontrado=1 if tem_notas else 0,
+                    total_baixado=1 if arquivos_baixados > 0 else 0,
                     erros=[], notas_baixadas=[], caminho_download=pasta_destino
                 )
             else:
-                logger.error("Falha no fluxo de download")
                 return ResultadoDownload(
-                    total_encontrado=total_notas, total_baixado=0,
+                    total_encontrado=1 if tem_notas else 0, total_baixado=0,
                     erros=["Falha no fluxo"], notas_baixadas=[], caminho_download=pasta_destino
                 )
-                
         except Exception as e:
-            logger.error(f"Erro no download: {e}")
             return ResultadoDownload(
-                total_encontrado=total_notas, total_baixado=0,
-                erros=[f"Erro: {str(e)}"], notas_baixadas=[], caminho_download=pasta_destino
+                total_encontrado=1 if tem_notas else 0, total_baixado=0,
+                erros=[f"Erro: {str(e)}"], notas_baixadas=[], caminho_destination=pasta_destino
             )
     
     def processar_download_unico(self, ie: str, mes_referencia: datetime = None) -> ResultadoDownload:
