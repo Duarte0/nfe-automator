@@ -4,11 +4,14 @@ import logging
 from pathlib import Path
 from typing import List
 
+from .validador_ie import ValidadorIE
+
 logger = logging.getLogger(__name__)
 
 class CarregadorIEs:
     def __init__(self, caminho_planilha: str = "dados/empresas.xlsx"):
         self.caminho_planilha = Path(caminho_planilha)
+        self.validador = ValidadorIE()
     
     def carregar_ies_validas(self) -> List[str]:
         try:
@@ -20,15 +23,18 @@ class CarregadorIEs:
             colunas = list(df.columns)
             coluna_ie = colunas[2] if len(colunas) > 2 else colunas[-1]
             
-            ies_validas = []
+            ies_brutas = []
             for ie in df[coluna_ie].dropna():
-                ie_str = str(ie).replace('.0', '')
-                if (ie_str not in ['NÃO TEM', 'NAO TEM', 'N TEM'] and 
-                    len(ie_str) <= 15 and 
-                    ie_str.replace('.', '').isdigit()):
-                    ies_validas.append(ie_str)
+                ie_str = str(ie).strip()
+                if ie_str not in ['NÃO TEM', 'NAO TEM', 'N TEM', 'SEM IE']:
+                    ies_brutas.append(ie_str)
             
-            logger.info(f"Carregadas {len(ies_validas)} IEs válidas")
+            ies_validas = self.validador.filtrar_ies_validas(ies_brutas)
+            
+            relatorio = self.validador.validar_lote_ies(ies_brutas)
+            logger.info(f"Validação IEs: {relatorio['taxa_validade']:.1f}% válidas "
+                       f"({len(relatorio['validas'])}/{relatorio['total_ies']})")
+            
             return ies_validas
             
         except Exception as e:
