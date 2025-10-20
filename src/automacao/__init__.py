@@ -10,6 +10,8 @@ from .download_manager import GerenciadorDownload
 from .ie_loader import CarregadorIEs
 from .processador_ie import ProcessadorIE
 from .iframe_manager import GerenciadorIframe
+from .health_check import HealthCheckDriver
+from .validador_ie import ValidadorIE
 
 __all__ = [
     'AutomatorSEFAZ',
@@ -21,5 +23,7 @@ __all__ = [
     'GerenciadorDownload',
     'CarregadorIEs',
     'ProcessadorIE',
-    'GerenciadorIframe'
+    'GerenciadorIframe',
+    'HealthCheckDriver',
+    'ValidadorIE'
 ]

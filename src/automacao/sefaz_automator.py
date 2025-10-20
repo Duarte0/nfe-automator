@@ -23,6 +23,7 @@ from .multi_ie_manager import GerenciadorMultiplasIEs
 from .ie_loader import CarregadorIEs
 from .processador_ie import ProcessadorIE
 from .iframe_manager import GerenciadorIframe
+from .health_check import HealthCheckDriver
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class AutomatorSEFAZ:
         self.carregador_ies = CarregadorIEs()
         self.processador_ie = None
         self.gerenciador_iframe = None
+        self.health_check = None
         
         self.estatisticas_fluxo = {
             'inicio_execucao': None,
@@ -74,6 +76,7 @@ class AutomatorSEFAZ:
                 return False
                 
             self.wait = WebDriverWait(driver, self.timeouts['element_wait'])
+            self.health_check = HealthCheckDriver(driver)
             self.gerenciador_iframe = GerenciadorIframe(driver)
             self.detector_mudancas = DetectorMudancas(driver)
             self.wait_inteligente = GerenciadorWaitInteligente(driver)
@@ -537,77 +540,33 @@ class AutomatorSEFAZ:
             return False
     
     def _processar_multiplas_ies(self) -> bool:
-        logger.info("Processando múltiplas IEs")
+        logger.info(f"Iniciando processamento de IEs")
         
         if not self.processador_ie:
             self.processador_ie = ProcessadorIE(self)
         
-        gerenciador_ies = GerenciadorMultiplasIEs()
-        gerenciador_ies.limpar_estado()
-        
         ies_validas = self.carregador_ies.carregar_ies_validas()
         if not ies_validas:
-            logger.error("Nenhuma IE válida encontrada")
             return False
         
-        ies_para_processar = ies_validas 
-        logger.info(f"Processando TODAS as {len(ies_para_processar)} IEs")
-        gerenciador_ies.adicionar_ies(ies_para_processar)
+        ies_com_notas = []
         
-        total_processadas = 0
-        total_com_notas = 0
-        total_com_erro = 0
-        
-        while True:
-            ie_atual = gerenciador_ies.obter_proxima_ie()
-            if not ie_atual:
-                break
-                
-            estado_atual = gerenciador_ies.estados[ie_atual]
-            tentativa_numero = estado_atual.tentativas + 1
-            
-            logger.info(f"Processando IE: {ie_atual} ({tentativa_numero}º tentativa) - {total_processadas}/{len(ies_para_processar)} processadas")
-            gerenciador_ies.marcar_em_andamento(ie_atual)
+        for i, ie in enumerate(ies_validas, 1):
+            logger.info(f"[{i}/{len(ies_validas)}] IE {ie}")
             
             try:
-                sucesso = self.processador_ie.processar_ie(ie_atual)
-                
-                if sucesso:
-                    gerenciador_ies.marcar_concluido(ie_atual)
-                    total_com_notas += 1
-                    logger.info(f"IE {ie_atual} concluída com notas")
+                if self.processador_ie.processar_ie(ie):
+                    ies_com_notas.append(ie)
+                    logger.info(f"  ✓ Baixado")
                 else:
-                    gerenciador_ies.marcar_pendente(ie_atual, "Sem notas")
-                    logger.info(f"IE {ie_atual} sem notas")
-                
+                    logger.info(f"  - Sem notas")
             except Exception as e:
-                gerenciador_ies.marcar_erro(ie_atual, str(e))
-                logger.error(f"IE {ie_atual} erro: {e}")
+                logger.info(f"  ✗ Erro")
             
-            total_processadas += 1
             time.sleep(2)
         
-        relatorio = gerenciador_ies.obter_relatorio()
-        
-        logger.info("=" * 70)
-        logger.info("RELATÓRIO FINAL - PROCESSAMENTO DE TODAS AS IEs")
-        logger.info("=" * 70)
-        logger.info(f"Total de IEs: {len(ies_para_processar)}")
-        logger.info(f"Processadas: {total_processadas}")
-        logger.info(f"Com notas (CONCLUÍDAS): {total_com_notas}")
-        logger.info(f"Sem notas (PENDENTES): {relatorio['pendentes']}")
-        logger.info(f"Com erro: {total_com_erro}")
-        logger.info(f"Taxa de sucesso: {(total_com_notas/len(ies_para_processar))*100:.1f}%")
-        logger.info("=" * 70)
-        
-        # Mostrar IEs com notas
-        if total_com_notas > 0:
-            logger.info("IEs que encontraram notas:")
-            for ie, estado in gerenciador_ies.estados.items():
-                if estado.status == 'concluido':
-                    logger.info(f"  - {ie}")
-        
-        return total_com_notas > 0
+        logger.info(f"Concluído: {len(ies_com_notas)} IEs com notas")
+        return len(ies_com_notas) > 0
 
     def _mostrar_relatorio_final(self, relatorio: Dict):
         print("\n" + "="*60)
