@@ -23,8 +23,8 @@ class GerenciadorDriver:
             'selenium.webdriver.remote.remote_connection': logging.WARNING,
             'urllib3': logging.WARNING,
             'urllib3.connectionpool': logging.WARNING,
-            'WDM': logging.INFO,
-            'webdriver_manager': logging.INFO,
+            'WDM': logging.WARNING,  # Reduzir ainda mais logs do WDM
+            'webdriver_manager': logging.WARNING,
         }
         
         for logger_name, level in log_levels.items():
@@ -37,8 +37,10 @@ class GerenciadorDriver:
             pass
     
     def configurar_driver(self) -> Optional[webdriver.Chrome]:
+        logger.info("Configurando WebDriver...")
+        
+        # Prioridade: WebDriver Manager (sempre atualizado)
         estrategias = [
-            self._configurar_driver_manual,
             self._configurar_webdriver_manager,
             self._configurar_driver_sistema,
         ]
@@ -48,45 +50,14 @@ class GerenciadorDriver:
             if driver:
                 self.driver = driver
                 self._aplicar_config_stealth()
+                logger.info("WebDriver configurado com sucesso")
                 return driver
         
         self._mostrar_erro_driver()
         return None
     
-    def _configurar_driver_manual(self) -> Optional[webdriver.Chrome]:
-        try:
-            logger.info("Tentando configuracao manual...")
-            
-            caminhos_driver = [
-                "./drivers/chromedriver.exe",
-                "./chromedriver.exe",
-                "chromedriver.exe",
-                os.path.join(os.getcwd(), "drivers", "chromedriver.exe"),
-            ]
-            
-            caminho_driver = None
-            for caminho in caminhos_driver:
-                if os.path.exists(caminho):
-                    caminho_driver = caminho
-                    logger.info(f"ChromeDriver encontrado: {caminho}")
-                    break
-            
-            if not caminho_driver:
-                logger.warning("Nenhum ChromeDriver manual encontrado")
-                return None
-            
-            service = Service(caminho_driver)
-            options = self._obter_opcoes_chrome()
-            driver = webdriver.Chrome(service=service, options=options)
-            
-            logger.info("Driver manual configurado com sucesso")
-            return driver
-            
-        except Exception as e:
-            logger.warning(f"Driver manual falhou: {e}")
-            return None
-    
     def _configurar_webdriver_manager(self) -> Optional[webdriver.Chrome]:
+        """Configura via WebDriver Manager - SEMPRE ATUALIZADO"""
         try:
             import warnings
             warnings.filterwarnings("ignore", category=UserWarning)
@@ -94,6 +65,7 @@ class GerenciadorDriver:
             from webdriver_manager.chrome import ChromeDriverManager
             from webdriver_manager.core.os_manager import ChromeType
             
+            # Configuração silenciosa
             service = Service(
                 ChromeDriverManager(chrome_type=ChromeType.GOOGLE).install()
             )
@@ -101,36 +73,35 @@ class GerenciadorDriver:
             options = self._obter_opcoes_chrome()
             driver = webdriver.Chrome(service=service, options=options)
             
-            logger.info("Driver configurado via WebDriver Manager")
             return driver
             
         except Exception as e:
-            logger.debug(f"WebDriver Manager falhou: {e}")
+            logger.debug(f"WebDriver Manager: {e}")
             return None
     
     def _configurar_driver_sistema(self) -> Optional[webdriver.Chrome]:
+        """Fallback: Driver do PATH do sistema"""
         try:
-            logger.info("Tentando driver do PATH do sistema...")
             options = self._obter_opcoes_chrome()
             driver = webdriver.Chrome(options=options)
-            logger.info("Driver do sistema configurado")
             return driver
         except Exception as e:
-            logger.warning(f"Driver do sistema falhou: {e}")
+            logger.debug(f"Driver sistema: {e}")
             return None
     
     def _obter_opcoes_chrome(self):
         options = Options()
         
+        # Otimizações de performance e stealth
         options.add_argument('--log-level=3')
         options.add_argument('--disable-logging')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
-        
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--window-size=1200,800")
         
+        # Remover automação detectável
         options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
         options.add_experimental_option('useAutomationExtension', False)
         
@@ -140,27 +111,25 @@ class GerenciadorDriver:
         if self.driver:
             try:
                 self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            except Exception as e:
-                logger.debug(f"Configuracao stealth falhou: {e}")
+            except Exception:
+                pass
     
     def _mostrar_erro_driver(self):
         erro_msg = """
      ERRO DE CONFIGURACAO DO NAVEGADOR
 ====================================
-Nao foi possivel configurar o WebDriver.
+Não foi possível configurar o WebDriver.
 
-    SOLUCOES:
-1. Baixe o ChromeDriver em: https://chromedriver.chromium.org/
-2. Coloque na pasta 'drivers/chromedriver.exe'
-3. Ou execute: pip install webdriver-manager
-4. Verifique se o Google Chrome esta instalado
+SOLUÇÕES:
+1. Execute: pip install webdriver-manager
+2. Verifique se o Google Chrome está instalado
+3. Ou baixe ChromeDriver manualmente em:
+   https://chromedriver.chromium.org/
+   e coloque no PATH do sistema
 ====================================
 """
         print(erro_msg)
     
     def fechar(self):
-        logger.info("MANTENDO NAVEGADOR ABERTO PARA INSPECAO")
-        logger.info("O navegador permanecera aberto para verificacao")
-        logger.info("Verifique os resultados manualmente")
-        
+        logger.info("Navegador mantido aberto para inspeção")
         self.driver = None
