@@ -88,10 +88,11 @@ class GerenciadorDriver:
     
     def _configurar_webdriver_manager(self) -> Optional[webdriver.Chrome]:
         try:
+            import warnings
+            warnings.filterwarnings("ignore", category=UserWarning)
+            
             from webdriver_manager.chrome import ChromeDriverManager
             from webdriver_manager.core.os_manager import ChromeType
-            
-            logger.info("Tentando configuracao automatica com WebDriver Manager...")
             
             service = Service(
                 ChromeDriverManager(chrome_type=ChromeType.GOOGLE).install()
@@ -104,7 +105,7 @@ class GerenciadorDriver:
             return driver
             
         except Exception as e:
-            logger.warning(f"WebDriver Manager falhou: {e}")
+            logger.debug(f"WebDriver Manager falhou: {e}")
             return None
     
     def _configurar_driver_sistema(self) -> Optional[webdriver.Chrome]:
@@ -130,7 +131,6 @@ class GerenciadorDriver:
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--window-size=1200,800")
         
-        # REMOVER configuracao de download - usar pasta padrao do sistema
         options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
         options.add_experimental_option('useAutomationExtension', False)
         
