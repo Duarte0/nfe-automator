@@ -7,6 +7,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 
 from .retry_manager import gerenciador_retry
+from .iframe_manager import GerenciadorIframe
 
 logger = logging.getLogger(__name__)
 
@@ -14,36 +15,31 @@ class ProcessadorIE:
     """Consolida toda lógica de processamento de IEs individuais"""
     
     def __init__(self, automator):
-        self.automator = automator
+        self.driver = automator.driver
         self.driver = automator.driver
         self.config = automator.config
         self.gerenciador_download = automator.gerenciador_download
+        self.gerenciador_iframe = GerenciadorIframe(automator.driver)
         
     def processar_ie(self, ie: str) -> bool:
-        """Processa uma IE individual de forma consolidada"""
         logger.info(f"Processando IE: {ie}")
         
-        # ETAPA 1: Apenas preencher formulário
         if not self._preencher_formulario(ie):
             logger.error("Falha ao preencher formulário")
             return False
         
-        # ETAPA 2: Aguardar CAPTCHA manual SEM fazer nada
         if not self._aguardar_captcha_manual():
             logger.error("Falha no CAPTCHA")
             return False
         
-        # ETAPA 3: Executar consulta APÓS CAPTCHA resolvido
         if not self._executar_consulta(ie):
             logger.error("Falha na consulta")
             return False
         
-        # ETAPA 4: Validar resultados
         if not self._validar_resultados(ie):
             logger.error("Falha na validação")
             return False
         
-        # Processar download apenas se houver notas
         total_notas = self.gerenciador_download.contar_notas_tabela()
         if total_notas > 0:
             logger.info(f"Encontradas {total_notas} notas - executando download")
@@ -53,16 +49,10 @@ class ProcessadorIE:
             return False
     
     def _preencher_formulario(self, ie: str) -> bool:
-        """Apenas preenche formulário - NÃO clica em nada"""
         def tentar_preencher():
             time.sleep(2)
             
-            try:
-                self.driver.switch_to.default_content()
-                iframe = self.driver.find_element(By.ID, "iNetaccess")
-                self.driver.switch_to.frame(iframe)
-                
-                # Preencher campos
+            with self.gerenciador_iframe.contexto_iframe((By.ID, "iNetaccess")):
                 campos = {
                     "cmpDataInicial": self.config.data_inicio,
                     "cmpDataFinal": self.config.data_fim, 
@@ -74,7 +64,6 @@ class ProcessadorIE:
                     elemento.clear()
                     elemento.send_keys(valor)
                 
-                # Configurações adicionais
                 seletor_modelo = Select(self.driver.find_element(By.ID, "cmpModelo"))
                 seletor_modelo.select_by_value("-")
                 
@@ -86,16 +75,7 @@ class ProcessadorIE:
                     pass
                 
                 logger.info("Formulário preenchido - aguardando CAPTCHA manual")
-                self.driver.switch_to.default_content()
                 return True
-                
-            except Exception as e:
-                logger.error(f"Erro preencher formulário: {e}")
-                try:
-                    self.driver.switch_to.default_content()
-                except:
-                    pass
-                return False
         
         return gerenciador_retry.executar_com_retry(
             tentar_preencher, max_tentativas=2, nome_operacao="Preencher Formulário"
@@ -129,15 +109,8 @@ class ProcessadorIE:
             return False
     
     def _executar_consulta(self, ie: str) -> bool:
-        """Executa consulta APÓS CAPTCHA resolvido"""
         def tentar_consultar():
-            try:
-                # Entrar no iframe para executar consulta
-                self.driver.switch_to.default_content()
-                iframe = self.driver.find_element(By.ID, "iNetaccess")
-                self.driver.switch_to.frame(iframe)
-                
-                # Verificar se o formulário ainda está preenchido
+            with self.gerenciador_iframe.contexto_iframe((By.ID, "iNetaccess")):
                 try:
                     campo_ie = self.driver.find_element(By.ID, "cmpNumIeDest")
                     if campo_ie.get_attribute("value") != ie:
@@ -146,25 +119,12 @@ class ProcessadorIE:
                         campo_ie.send_keys(ie)
                 except:
                     logger.error("Campo IE não encontrado")
-                    self.driver.switch_to.default_content()
                     return False
                 
-                # AGORA SIM clicar no botão Pesquisar
                 logger.info("Executando consulta...")
                 botao_pesquisar = self.driver.find_element(By.ID, "btnPesquisar")
                 botao_pesquisar.click()
-                
-                self.driver.switch_to.default_content()
-                time.sleep(8)  # Aguardar resultados
                 return True
-                
-            except Exception as e:
-                logger.error(f"Erro executar consulta: {e}")
-                try:
-                    self.driver.switch_to.default_content()
-                except:
-                    pass
-                return False
         
         return gerenciador_retry.executar_com_retry(
             tentar_consultar, max_tentativas=2, nome_operacao="Executar Consulta"

@@ -9,6 +9,7 @@ from .fluxo_utils import DetectorMudancas, GerenciadorWaitInteligente, Verificad
 from .download_manager import GerenciadorDownload 
 from .ie_loader import CarregadorIEs
 from .processador_ie import ProcessadorIE
+from .iframe_manager import GerenciadorIframe
 
 __all__ = [
     'AutomatorSEFAZ',
@@ -19,5 +20,6 @@ __all__ = [
     'VerificadorEstado',
     'GerenciadorDownload',
     'CarregadorIEs',
-    'ProcessadorIE'
+    'ProcessadorIE',
+    'GerenciadorIframe'
 ]

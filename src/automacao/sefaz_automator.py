@@ -22,6 +22,7 @@ from .download_manager import GerenciadorDownload
 from .multi_ie_manager import GerenciadorMultiplasIEs
 from .ie_loader import CarregadorIEs
 from .processador_ie import ProcessadorIE
+from .iframe_manager import GerenciadorIframe
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class AutomatorSEFAZ:
         self.seletor_baixar_xml_cache = None
         self.carregador_ies = CarregadorIEs()
         self.processador_ie = None
+        self.gerenciador_iframe = None
         
         self.estatisticas_fluxo = {
             'inicio_execucao': None,
@@ -72,7 +74,7 @@ class AutomatorSEFAZ:
                 return False
                 
             self.wait = WebDriverWait(driver, self.timeouts['element_wait'])
-            
+            self.gerenciador_iframe = GerenciadorIframe(driver)
             self.detector_mudancas = DetectorMudancas(driver)
             self.wait_inteligente = GerenciadorWaitInteligente(driver)
             self.verificador_estado = VerificadorEstado(driver)

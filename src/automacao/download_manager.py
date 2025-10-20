@@ -9,6 +9,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 from .retry_manager import gerenciador_retry
+from .iframe_manager import GerenciadorIframe
 from ..utils.data_models import ResultadoDownload
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,7 @@ class GerenciadorDownload:
     def __init__(self, driver: WebDriver):
         self.driver = driver
         self.wait = WebDriverWait(driver, 15)
+        self.gerenciador_iframe = GerenciadorIframe(driver)
     
     def criar_estrutura_pastas(self, ie: str, data_referencia: datetime = None) -> str:
         if data_referencia is None:
@@ -55,46 +57,30 @@ class GerenciadorDownload:
     
     def contar_notas_tabela(self) -> int:
         try:
-            iframe = self.driver.find_element(By.ID, "iNetaccess")
-            self.driver.switch_to.frame(iframe)
-            
-            seletores_tabela = [
-                "//table//tr[contains(@class, 'tbody-row')]",
-                "//table//tr[position()>1]",
-                "//tbody/tr"
-            ]
-            
-            for seletor in seletores_tabela:
-                try:
-                    linhas = self.driver.find_elements(By.XPATH, seletor)
-                    if linhas:
-                        logger.info(f"Notas encontradas: {len(linhas)}")
-                        self.driver.switch_to.default_content()
-                        return len(linhas)
-                except:
-                    continue
-            
-            self.driver.switch_to.default_content()
-            return 0
-            
+            with self.gerenciador_iframe.contexto_iframe((By.ID, "iNetaccess")):
+                seletores_tabela = [
+                    "//table//tr[contains(@class, 'tbody-row')]",
+                    "//table//tr[position()>1]",
+                    "//tbody/tr"
+                ]
+                
+                for seletor in seletores_tabela:
+                    try:
+                        linhas = self.driver.find_elements(By.XPATH, seletor)
+                        if linhas:
+                            logger.info(f"Notas encontradas: {len(linhas)}")
+                            return len(linhas)
+                    except:
+                        continue
+                return 0
+                
         except Exception as e:
             logger.warning(f"Erro ao contar notas: {e}")
-            try:
-                self.driver.switch_to.default_content()
-            except:
-                pass
             return 0
     
     def _clicar_botao_baixar_xml(self) -> bool:
-        """Localiza e clica no botão Baixar XML após consulta"""
-        logger.info("Procurando botão Baixar XML...")
-        
         def tentar_clicar_botao():
-            try:
-                iframe = self.driver.find_element(By.ID, "iNetaccess")
-                self.driver.switch_to.frame(iframe)
-                
-                # Procurar o botão principal "Baixar XML" que aparece após a consulta
+            with self.gerenciador_iframe.contexto_iframe((By.ID, "iNetaccess")):
                 seletores_botao = [
                     (By.XPATH, "//button[contains(text(), 'Baixar XML')]"),
                     (By.XPATH, "//a[contains(text(), 'Baixar XML')]"),
@@ -109,44 +95,14 @@ class GerenciadorDownload:
                         if botao.is_displayed() and botao.is_enabled():
                             self.driver.execute_script("arguments[0].click();", botao)
                             logger.info(f"Botão Baixar XML encontrado e clicado: {seletor[1]}")
-                            self.driver.switch_to.default_content()
                             return True
                     except:
                         continue
                 
-                # Se não encontrou, verificar se há tabela de resultados
-                try:
-                    linhas_tabela = self.driver.find_elements(By.XPATH, "//table//tr[contains(@class, 'tbody-row')]")
-                    if linhas_tabela:
-                        logger.info(f"Tabela com {len(linhas_tabela)} notas encontrada, mas botão Baixar XML não localizado")
-                        # Tentar buscar por elementos que podem conter o botão
-                        elementos_acao = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'action')]//button")
-                        for elemento in elementos_acao:
-                            if "baixar" in elemento.text.lower() or "download" in elemento.text.lower():
-                                self.driver.execute_script("arguments[0].click();", elemento)
-                                logger.info("Botão de ação encontrado e clicado")
-                                self.driver.switch_to.default_content()
-                                return True
-                except:
-                    pass
-                    
-                logger.warning("Nenhum botão Baixar XML encontrado")
-                self.driver.switch_to.default_content()
-                return False
-                    
-            except Exception as e:
-                logger.error(f"Erro ao procurar botão Baixar XML: {e}")
-                try:
-                    self.driver.switch_to.default_content()
-                except:
-                    pass
                 return False
         
         return gerenciador_retry.executar_com_retry(
-            tentar_clicar_botao,
-            max_tentativas=3,
-            delay=2,
-            nome_operacao="Clicar Botão Baixar XML"
+            tentar_clicar_botao, max_tentativas=3, nome_operacao="Clicar Botão Baixar XML"
         )
     
     def _processar_modal_download(self) -> bool:
