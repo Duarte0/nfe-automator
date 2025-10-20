@@ -4,26 +4,24 @@ Automação SEFAZ - Download XML NFe
 
 import time
 import logging
-from typing import List, Optional, Dict
+from typing import Optional, Dict
 from datetime import datetime
 
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 
-from ..config.config_manager import SEFAZConfig
-from .driver_manager import GerenciadorDriver
-from ..config.constants import SELECTORS, TIMEOUTS, SEFAZ_LOGIN_URL, SEFAZ_DASHBOARD_URL, SEFAZ_ACESSO_RESTRITO_URL
-from .fluxo_utils import DetectorMudancas, GerenciadorWaitInteligente, VerificadorEstado
-
-from .retry_manager import gerenciador_retry
 from .download_manager import GerenciadorDownload
-from .multi_ie_manager import GerenciadorMultiplasIEs
+from .fluxo_utils import DetectorMudancas, GerenciadorWaitInteligente, VerificadorEstado
+from src.config.config_manager import SEFAZConfig
+from .driver_manager import GerenciadorDriver
+from ..config.constants import SELECTORS, SEFAZ_LOGIN_URL, SEFAZ_DASHBOARD_URL
+from .retry_manager import gerenciador_retry
 from .ie_loader import CarregadorIEs
 from .processador_ie import ProcessadorIE
 from .iframe_manager import GerenciadorIframe
 from .health_check import HealthCheckDriver
+from .timeout_manager import TimeoutManager
 
 logger = logging.getLogger(__name__)
 
@@ -41,20 +39,13 @@ class AutomatorSEFAZ:
         self.processador_ie = None
         self.gerenciador_iframe = None
         self.health_check = None
+        self.timeout_manager = TimeoutManager()
         
         self.estatisticas_fluxo = {
             'inicio_execucao': None,
             'etapas_executadas': 0,
             'etapas_com_erro': 0,
             'tempos_etapas': {}
-        }
-        
-        self.timeouts = {
-            'page_load': 3,
-            'element_wait': 8,
-            'action_delay': 1,
-            'login_wait': 5,
-            'popup_wait': 10,
         }
         
         self.etapas_fluxo = [
@@ -75,16 +66,20 @@ class AutomatorSEFAZ:
             if not driver:
                 return False
                 
-            self.wait = WebDriverWait(driver, self.timeouts['element_wait'])
-            self.health_check = HealthCheckDriver(driver)
-            self.gerenciador_iframe = GerenciadorIframe(driver)
+            self.timeout_manager = TimeoutManager()
+            
             self.detector_mudancas = DetectorMudancas(driver)
-            self.wait_inteligente = GerenciadorWaitInteligente(driver)
             self.verificador_estado = VerificadorEstado(driver)
             self.gerenciador_download = GerenciadorDownload(driver)
             
-            logger.info("WebDriver e utilitários otimizados configurados")
+            timeout_elementos = self.timeout_manager.get_timeout('element_wait')
+            self.wait = WebDriverWait(driver, timeout_elementos)
+            self.wait_inteligente = GerenciadorWaitInteligente(driver, self.timeout_manager)
             
+            self.health_check = HealthCheckDriver(driver)
+            self.gerenciador_iframe = GerenciadorIframe(driver)
+            
+            logger.info("WebDriver e utilitários otimizados configurados")
             return True
         except Exception as e:
             logger.error(f"Erro inicializacao: {e}")
@@ -186,6 +181,9 @@ class AutomatorSEFAZ:
         logger.info("Efetuando login")
         
         def tentar_login():
+            import time
+            inicio = time.time()
+            
             url_anterior = self.driver.current_url
             self.driver.get(SEFAZ_LOGIN_URL)
             self.detector_mudancas.aguardar_carregamento()
@@ -210,11 +208,14 @@ class AutomatorSEFAZ:
             campo_senha.send_keys(self.config.senha)
             botao_login.click()
             
-            time.sleep(self.timeouts['login_wait'])
+            # Usar timeout dinâmico
+            delay_login = self.timeout_manager.get_delay('login_wait')
+            time.sleep(delay_login)
             
             mudanca, url_atual = self.detector_mudancas.verificar_mudanca_url(url_anterior)
-            if mudanca:
-                logger.debug(f"Redirecionado para: {url_atual}")
+            
+            tempo_decorrido = time.time() - inicio
+            self.timeout_manager.registrar_tempo_operacao('login_wait', tempo_decorrido)
             
             return not self.verificador_estado.esta_na_pagina_login()
         
@@ -230,12 +231,13 @@ class AutomatorSEFAZ:
             return False
     
     def _aguardar_dashboard(self) -> bool:
-        time.sleep(self.timeouts['action_delay'])
+        delay_acao = self.timeout_manager.get_delay('action_delay')
+        time.sleep(delay_acao)
         
         if "portalsefaz-apps" not in self.driver.current_url:
             self.driver.get(SEFAZ_DASHBOARD_URL)
-            time.sleep(self.timeouts['page_load'])
-        
+            delay_page_load = self.timeout_manager.get_delay('page_load')
+            time.sleep(delay_page_load)
         return True
     
     def _clicar_acesso_restrito(self) -> bool:
@@ -363,7 +365,8 @@ class AutomatorSEFAZ:
         def tentar_popup():
             logger.info("Aguardando ate 15 segundos para popup aparecer...")
             
-            for tentativa in range(15):
+            timeout_popup = self.timeout_manager.get_timeout('popup_wait')
+            for tentativa in range(timeout_popup):
                 if self._verificar_popup_login():
                     logger.info("POPUP DETECTADO! Preenchendo...")
                     return self._preencher_popup_login()
@@ -453,7 +456,8 @@ class AutomatorSEFAZ:
         logger.info("Clicando novamente em Baixar XML NFE apos login...")
         
         def tentar_clicar_apos_login():
-            time.sleep(3)
+            delay_acao = self.timeout_manager.get_delay('action_delay')
+            time.sleep(delay_acao)
             
             try:
                 iframe = self.driver.find_element(By.ID, "iNetaccess")
