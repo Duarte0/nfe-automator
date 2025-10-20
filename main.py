@@ -10,6 +10,7 @@ from datetime import datetime
 from src.config import gerenciador_config
 from src.automacao import AutomatorSEFAZ
 from src.utils.login_helper import LoggingConfig
+from src.automacao.timeout_manager import TimeoutManager
 
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
