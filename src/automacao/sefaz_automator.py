@@ -556,20 +556,21 @@ class AutomatorSEFAZ:
         ies_com_notas = []
         
         for i, ie in enumerate(ies_validas, 1):
-            logger.info(f"[{i}/{len(ies_validas)}] IE {ie}")
+            if i % 10 == 1 or i == len(ies_validas):
+                logger.info(f"[{i}/{len(ies_validas)}] IE {ie}")
+            else:
+                logger.debug(f"[{i}/{len(ies_validas)}] IE {ie}") 
             
             try:
                 if self.processador_ie.processar_ie(ie):
                     ies_com_notas.append(ie)
-                    logger.info(f"  ✓ Baixado")
+                    logger.debug(f"  ✓ Baixado")
                 else:
-                    logger.info(f"  - Sem notas")
+                    logger.debug(f"  - Sem notas") 
             except Exception as e:
-                logger.info(f"  ✗ Erro")
-            
-            time.sleep(2)
+                logger.error(f"  ✗ Erro: {e}") 
         
-        logger.info(f"Concluído: {len(ies_com_notas)} IEs com notas")
+        logger.info(f"Concluído: {len(ies_com_notas)} IEs com notas de {len(ies_validas)} processadas")
         return len(ies_com_notas) > 0
 
     def _mostrar_relatorio_final(self, relatorio: Dict):

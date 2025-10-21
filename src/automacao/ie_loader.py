@@ -1,8 +1,7 @@
-
 import pandas as pd
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, Dict
 
 from .validador_ie import ValidadorIE
 
@@ -13,30 +12,40 @@ class CarregadorIEs:
         self.caminho_planilha = Path(caminho_planilha)
         self.validador = ValidadorIE()
     
-    def carregar_ies_validas(self) -> List[str]:
+    def carregar_empresas_validas(self) -> List[Dict]:
+        """Retorna lista de dicionários com IE e Nome"""
         try:
             if not self.caminho_planilha.exists():
                 logger.error(f"Planilha não encontrada: {self.caminho_planilha}")
                 return []
             
             df = pd.read_excel(self.caminho_planilha)
-            colunas = list(df.columns)
-            coluna_ie = colunas[2] if len(colunas) > 2 else colunas[-1]
+
+            coluna_nome = df.columns[0] 
+            coluna_ie = df.columns[2]   
             
-            ies_brutas = []
-            for ie in df[coluna_ie].dropna():
-                ie_str = str(ie).strip()
-                if ie_str not in ['NÃO TEM', 'NAO TEM', 'N TEM', 'SEM IE']:
-                    ies_brutas.append(ie_str)
+            empresas = []
+            for _, row in df.iterrows():
+                ie = str(row[coluna_ie]).strip() if pd.notna(row[coluna_ie]) else ""
+                nome = str(row[coluna_nome]).strip() if pd.notna(row[coluna_nome]) else f"Empresa_{ie}"
+                
+                # Filtrar IEs inválidas
+                if ie and ie not in ['NÃO TEM', 'NAO TEM', 'N TEM', 'SEM IE']:
+                    # CORREÇÃO: Tratar o retorno como tupla (valido, resultado)
+                    valido, ie_normalizada = self.validador.validar_ie(ie)
+                    if valido:
+                        empresas.append({'ie': ie_normalizada, 'nome': nome})
+                    else:
+                        logger.warning(f"IE inválida ignorada: {ie} - {nome} - Motivo: {ie_normalizada}")
             
-            ies_validas = self.validador.filtrar_ies_validas(ies_brutas)
-            
-            relatorio = self.validador.validar_lote_ies(ies_brutas)
-            logger.info(f"Validação IEs: {relatorio['taxa_validade']:.1f}% válidas "
-                       f"({len(relatorio['validas'])}/{relatorio['total_ies']})")
-            
-            return ies_validas
+            logger.info(f"Carregadas {len(empresas)} empresas válidas")
+            return empresas
             
         except Exception as e:
             logger.error(f"Erro ao carregar planilha: {e}")
             return []
+
+    def carregar_ies_validas(self) -> List[str]:
+        """Método legado - retorna apenas IEs para compatibilidade"""
+        empresas = self.carregar_empresas_validas()
+        return [empresa['ie'] for empresa in empresas]

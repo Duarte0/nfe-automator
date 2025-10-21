@@ -8,6 +8,7 @@ from selenium.webdriver.support.ui import Select
 
 from .retry_manager import gerenciador_retry
 from .iframe_manager import GerenciadorIframe
+from selenium.webdriver.common.keys import Keys
 
 logger = logging.getLogger(__name__)
 
@@ -52,15 +53,15 @@ class ProcessadorIE:
             return False
         
         if not self._validar_resultados(ie):
-            logger.error("Falha na validação")
+            logger.debug(f"Sem notas para IE {ie}")  # DEBUG em vez de ERROR
             return False
         
         total_notas = self.gerenciador_download.contar_notas_tabela()
         if total_notas > 0:
-            logger.info(f"Encontradas {total_notas} notas - executando download")
+            logger.debug(f"Encontradas {total_notas} notas - executando download")  # DEBUG
             return self._processar_download(ie)
         else:
-            logger.info(f"Nenhuma nota encontrada para IE {ie}")
+            logger.debug(f"Nenhuma nota encontrada para IE {ie}")  # DEBUG
             return False
     
     def _preencher_formulario(self, ie: str) -> bool:
@@ -68,17 +69,30 @@ class ProcessadorIE:
             time.sleep(2)
             
             with self.gerenciador_iframe.contexto_iframe((By.ID, "iNetaccess")):
-                campos = {
-                    "cmpDataInicial": self.config.data_inicio,
-                    "cmpDataFinal": self.config.data_fim, 
-                    "cmpNumIeDest": ie
-                }
+                # Preencher datas primeiro - método específico para campos com máscara
+                if not self._preencher_data_com_mascara("cmpDataInicial", self.config.data_inicio):
+                    return False
+                    
+                if not self._preencher_data_com_mascara("cmpDataFinal", self.config.data_fim):
+                    return False
                 
-                for campo_id, valor in campos.items():
-                    elemento = self.driver.find_element(By.ID, campo_id)
-                    elemento.clear()
-                    elemento.send_keys(valor)
+                # Preencher IE (campo normal)
+                try:
+                    campo_ie = self.driver.find_element(By.ID, "cmpNumIeDest")
+                    campo_ie.clear()
+                    time.sleep(0.3)
+                    campo_ie.send_keys(ie)
+                    
+                    # Verificar se IE foi preenchido
+                    if campo_ie.get_attribute("value") != ie:
+                        logger.debug("IE não preenchida corretamente - tentando JavaScript")  # DEBUG
+                        self.driver.execute_script(f"arguments[0].value = '{ie}';", campo_ie)
+                        
+                except Exception as e:
+                    logger.error(f"Erro ao preencher IE: {e}")
+                    return False
                 
+                # Configurações adicionais
                 seletor_modelo = Select(self.driver.find_element(By.ID, "cmpModelo"))
                 seletor_modelo.select_by_value("-")
                 
@@ -89,36 +103,141 @@ class ProcessadorIE:
                 except:
                     pass
                 
-                logger.info("Formulário preenchido - aguardando CAPTCHA manual")
+                logger.debug("Formulário preenchido - aguardando CAPTCHA manual")  # DEBUG
                 return True
         
         return gerenciador_retry.executar_com_retry(
             tentar_preencher, max_tentativas=2, nome_operacao="Preencher Formulário"
         )
-    
-    def _aguardar_captcha_manual(self) -> bool:
-        """APENAS aguarda resolução manual do CAPTCHA - NÃO faz nada"""
-        logger.info("AGUARDANDO RESOLUÇÃO MANUAL DO CAPTCHA")
+
+    def _preencher_data_com_mascara(self, campo_id: str, data_str: str) -> bool:
+        """Preenche campo de data com máscara usando múltiplas estratégias"""
+        data_formatada = self._validar_e_formatar_data(data_str)
         
-        print("\n" + "="*70)
-        print("CAPTCHA REQUERIDO - RESOLUÇÃO MANUAL")
-        print("="*70)
-        print("INSTRUÇÕES:")
-        print("1. RESOLVA o CAPTCHA no navegador AGORA")
-        print("2. NÃO clique em Pesquisar ainda")
-        print("3. Aguarde o processamento completo do CAPTCHA")
-        print("4. A página deve recarregar automaticamente")
-        print("5. SÓ DEPOIS pressione ENTER aqui")
-        print("="*70)
-        print("O programa está AGUARDANDO...")
-        print("="*70)
+        for tentativa, metodo in enumerate([
+            self._preencher_data_javascript,
+            self._preencher_data_sequencial, 
+            self._preencher_data_backspace
+        ], 1):
+            logger.debug(f"Tentativa {tentativa} para campo {campo_id}")  # DEBUG
+            
+            if metodo(campo_id, data_formatada):
+                # Verificar se preencheu corretamente
+                if self._verificar_data_preenchida(campo_id, data_formatada):
+                    logger.debug(f"Campo {campo_id} preenchido: {data_formatada}")  # DEBUG
+                    return True
+                else:
+                    logger.warning(f"Campo {campo_id} não validado na tentativa {tentativa}")
+            
+            time.sleep(1)
+        
+        logger.error(f"Todas as tentativas falharam para {campo_id}")
+        return False
+
+    def _preencher_data_javascript(self, campo_id: str, data: str) -> bool:
+        """Preenche data via JavaScript - ignora máscara"""
+        try:
+            elemento = self.driver.find_element(By.ID, campo_id)
+            self.driver.execute_script(f"arguments[0].value = '{data}';", elemento)
+            return True
+        except:
+            return False
+
+    def _preencher_data_sequencial(self, campo_id: str, data: str) -> bool:
+        """Preenche data digitando caracter por caracter"""
+        try:
+            elemento = self.driver.find_element(By.ID, campo_id)
+            elemento.click()  # Focar no campo
+            elemento.clear()  # Limpar primeiro
+            
+            # Digitar cada caractere com pequeno delay
+            for char in data:
+                elemento.send_keys(char)
+                time.sleep(0.1)
+                
+            return True
+        except:
+            return False
+
+    def _preencher_data_backspace(self, campo_id: str, data: str) -> bool:
+        """Limpa campo com Backspace e depois preenche"""
+        try:
+            elemento = self.driver.find_element(By.ID, campo_id)
+            
+            # Limpar com Backspace
+            elemento.click()
+            for _ in range(10):  # Limpar completamente
+                elemento.send_keys(Keys.BACKSPACE)
+                time.sleep(0.05)
+            
+            time.sleep(0.5)
+            
+            # Preencher nova data
+            for char in data:
+                elemento.send_keys(char)
+                time.sleep(0.1)
+                
+            return True
+        except:
+            return False
+
+    def _verificar_data_preenchida(self, campo_id: str, data_esperada: str) -> bool:
+        """Verifica se a data foi preenchida corretamente"""
+        try:
+            elemento = self.driver.find_element(By.ID, campo_id)
+            valor_obtido = elemento.get_attribute("value") or ""
+            
+            # Verificar se não está vazio e contém a data esperada
+            return valor_obtido and data_esperada in valor_obtido
+        except:
+            return False
+
+    def _validar_e_formatar_data(self, data_str: str) -> str:
+        """Valida e formata data no padrão DD/MM/AAAA"""
+        try:
+            from datetime import datetime
+            
+            # Converter e validar data
+            data_obj = datetime.strptime(data_str, "%d/%m/%Y")
+            
+            # Retornar no formato correto
+            return data_obj.strftime("%d/%m/%Y")
+            
+        except ValueError as e:
+            logger.error(f"Data inválida: {data_str} - {e}")
+            # Fallback: usar data atual se a config estiver inválida
+            from datetime import datetime
+            data_fallback = datetime.now().strftime("%d/%m/%Y")
+            logger.warning(f"Usando fallback: {data_fallback}")
+            return data_fallback
+        
+    def _aguardar_captcha_manual(self) -> bool:
+        """Aguarda resolução manual com verificação opcional"""
+        logger.info("Aguardando resolução manual do CAPTCHA")  # INFO mantido - é importante
+        
+        print("\n" + "="*50)
+        print("RESOLUÇÃO MANUAL DO CAPTCHA")
+        print("="*50)
+        print("1. Resolva o CAPTCHA no navegador")
+        print("2. Aguarde processamento completo")
+        print("3. Pressione ENTER quando concluído")
+        print("="*50)
         
         try:
-            input("Pressione ENTER APÓS resolver o CAPTCHA no navegador: ")
-            time.sleep(3)  # Aguardar processamento
-            logger.info("CAPTCHA resolvido - continuando fluxo")
-            return True
+            input("Pressione ENTER após resolver o CAPTCHA: ")
+            time.sleep(2)
             
+            # Verificação opcional - se o botão Pesquisar está habilitado
+            try:
+                with self.gerenciador_iframe.contexto_iframe((By.ID, "iNetaccess")):
+                    botao_pesquisar = self.driver.find_element(By.ID, "btnPesquisar")
+                    if botao_pesquisar.is_enabled():
+                        logger.debug("CAPTCHA resolvido com sucesso")  # DEBUG
+                        return True
+            except:
+                logger.debug("CAPTCHA presumivelmente resolvido")  # DEBUG
+                
+            return True
         except Exception as e:
             logger.error(f"Erro no CAPTCHA manual: {e}")
             return False
@@ -136,7 +255,7 @@ class ProcessadorIE:
                     logger.error("Campo IE não encontrado")
                     return False
                 
-                logger.info("Executando consulta...")
+                logger.debug("Executando consulta...")  # DEBUG
                 botao_pesquisar = self.driver.find_element(By.ID, "btnPesquisar")
                 botao_pesquisar.click()
                 return True
@@ -181,15 +300,15 @@ class ProcessadorIE:
                 if botao_nova_consulta.is_displayed():
                     botao_nova_consulta.click()
                     time.sleep(2)
-                    logger.info("Voltou para página de consulta")
+                    logger.debug("Voltou para página de consulta")  # DEBUG
             except:
-                logger.info("Já está na página de consulta")
+                logger.debug("Já está na página de consulta")  # DEBUG
             
             self.driver.switch_to.default_content()
             return True
             
         except Exception as e:
-            logger.debug(f"Não foi necessário voltar: {e}")
+            logger.debug(f"Não foi necessário voltar: {e}")  # DEBUG
             try:
                 self.driver.switch_to.default_content()
             except:

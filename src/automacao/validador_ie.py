@@ -1,4 +1,3 @@
-# validador_ie.py
 import re
 import logging
 from typing import List, Tuple
@@ -7,23 +6,23 @@ logger = logging.getLogger(__name__)
 
 class ValidadorIE:
     @staticmethod
+    def validar_ie(ie: str) -> Tuple[bool, str]:
+        """Valida formato básico da Inscrição Estadual - Método principal"""
+        return ValidadorIE.validar_formato_ie(ie)
+    
+    @staticmethod
     def validar_formato_ie(ie: str) -> Tuple[bool, str]:
-        """Valida formato básico da Inscrição Estadual"""
         if not ie or not isinstance(ie, str):
             return False, "IE vazia ou não é string"
         
-        # Limpar caracteres não numéricos
         ie_limpa = re.sub(r'[^\d]', '', ie)
         
-        # Verificar comprimento típico de IE
         if len(ie_limpa) < 8 or len(ie_limpa) > 14:
             return False, f"IE com comprimento inválido: {len(ie_limpa)} dígitos"
         
-        # Verificar se não é sequência de zeros
         if ie_limpa == '0' * len(ie_limpa):
             return False, "IE é sequência de zeros"
         
-        # Verificar se tem dígitos válidos
         if not ie_limpa.isdigit():
             return False, "IE contém caracteres inválidos"
         
@@ -41,7 +40,7 @@ class ValidadorIE:
         ies_invalidas = []
         
         for ie in ies:
-            valido, resultado = ValidadorIE.validar_formato_ie(ie)
+            valido, resultado = ValidadorIE.validar_ie(ie)
             if valido:
                 ies_validas.append(resultado)  # resultado já é a IE normalizada
             else:
@@ -66,7 +65,7 @@ class ValidadorIE:
         }
         
         for ie in ies:
-            valido, resultado = ValidadorIE.validar_formato_ie(ie)
+            valido, resultado = ValidadorIE.validar_ie(ie)
             if valido:
                 relatorio['validas'].append(resultado)
             else:
