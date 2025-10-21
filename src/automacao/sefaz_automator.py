@@ -564,11 +564,8 @@ class AutomatorSEFAZ:
             try:
                 if self.processador_ie.processar_ie(ie):
                     ies_com_notas.append(ie)
-                    logger.debug(f"  ✓ Baixado")
-                else:
-                    logger.debug(f"  - Sem notas") 
             except Exception as e:
-                logger.error(f"  ✗ Erro: {e}") 
+                logger.error(f"  ✗ Erro: {e}")
         
         logger.info(f"Concluído: {len(ies_com_notas)} IEs com notas de {len(ies_validas)} processadas")
         return len(ies_com_notas) > 0

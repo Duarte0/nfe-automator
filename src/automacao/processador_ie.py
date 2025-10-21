@@ -53,15 +53,12 @@ class ProcessadorIE:
             return False
         
         if not self._validar_resultados(ie):
-            logger.debug(f"Sem notas para IE {ie}")  # DEBUG em vez de ERROR
             return False
         
         total_notas = self.gerenciador_download.contar_notas_tabela()
         if total_notas > 0:
-            logger.debug(f"Encontradas {total_notas} notas - executando download")  # DEBUG
             return self._processar_download(ie)
         else:
-            logger.debug(f"Nenhuma nota encontrada para IE {ie}")  # DEBUG
             return False
     
     def _preencher_formulario(self, ie: str) -> bool:
@@ -85,7 +82,6 @@ class ProcessadorIE:
                     
                     # Verificar se IE foi preenchido
                     if campo_ie.get_attribute("value") != ie:
-                        logger.debug("IE não preenchida corretamente - tentando JavaScript")  # DEBUG
                         self.driver.execute_script(f"arguments[0].value = '{ie}';", campo_ie)
                         
                 except Exception as e:
@@ -103,7 +99,6 @@ class ProcessadorIE:
                 except:
                     pass
                 
-                logger.debug("Formulário preenchido - aguardando CAPTCHA manual")  # DEBUG
                 return True
         
         return gerenciador_retry.executar_com_retry(
@@ -119,12 +114,9 @@ class ProcessadorIE:
             self._preencher_data_sequencial, 
             self._preencher_data_backspace
         ], 1):
-            logger.debug(f"Tentativa {tentativa} para campo {campo_id}")  # DEBUG
-            
             if metodo(campo_id, data_formatada):
                 # Verificar se preencheu corretamente
                 if self._verificar_data_preenchida(campo_id, data_formatada):
-                    logger.debug(f"Campo {campo_id} preenchido: {data_formatada}")  # DEBUG
                     return True
                 else:
                     logger.warning(f"Campo {campo_id} não validado na tentativa {tentativa}")
@@ -213,7 +205,7 @@ class ProcessadorIE:
         
     def _aguardar_captcha_manual(self) -> bool:
         """Aguarda resolução manual com verificação opcional"""
-        logger.info("Aguardando resolução manual do CAPTCHA")  # INFO mantido - é importante
+        logger.info("Aguardando resolução manual do CAPTCHA")
         
         print("\n" + "="*50)
         print("RESOLUÇÃO MANUAL DO CAPTCHA")
@@ -226,17 +218,6 @@ class ProcessadorIE:
         try:
             input("Pressione ENTER após resolver o CAPTCHA: ")
             time.sleep(2)
-            
-            # Verificação opcional - se o botão Pesquisar está habilitado
-            try:
-                with self.gerenciador_iframe.contexto_iframe((By.ID, "iNetaccess")):
-                    botao_pesquisar = self.driver.find_element(By.ID, "btnPesquisar")
-                    if botao_pesquisar.is_enabled():
-                        logger.debug("CAPTCHA resolvido com sucesso")  # DEBUG
-                        return True
-            except:
-                logger.debug("CAPTCHA presumivelmente resolvido")  # DEBUG
-                
             return True
         except Exception as e:
             logger.error(f"Erro no CAPTCHA manual: {e}")
@@ -255,7 +236,6 @@ class ProcessadorIE:
                     logger.error("Campo IE não encontrado")
                     return False
                 
-                logger.debug("Executando consulta...")  # DEBUG
                 botao_pesquisar = self.driver.find_element(By.ID, "btnPesquisar")
                 botao_pesquisar.click()
                 return True
@@ -300,15 +280,13 @@ class ProcessadorIE:
                 if botao_nova_consulta.is_displayed():
                     botao_nova_consulta.click()
                     time.sleep(2)
-                    logger.debug("Voltou para página de consulta")  # DEBUG
             except:
-                logger.debug("Já está na página de consulta")  # DEBUG
+                pass
             
             self.driver.switch_to.default_content()
             return True
             
-        except Exception as e:
-            logger.debug(f"Não foi necessário voltar: {e}")  # DEBUG
+        except Exception:
             try:
                 self.driver.switch_to.default_content()
             except:

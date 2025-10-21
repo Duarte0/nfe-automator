@@ -31,7 +31,6 @@ class GerenciadorDownload:
         
         pasta_destino = Path.home() / "Downloads" / "SEFAZ" / f"IE_{ie}" / ano / mes
         os.makedirs(pasta_destino, exist_ok=True)
-        logger.debug(f"Estrutura criada para IE {ie}: {pasta_destino}")  # DEBUG
         
         return str(pasta_destino)
     
@@ -52,12 +51,7 @@ class GerenciadorDownload:
                     except:
                         continue
                 return 0
-        except Exception as e:
-            logger.debug(f"Erro ao contar notas: {e}")  # DEBUG
-            return 0
-                
-        except Exception as e:
-            logger.warning(f"Erro ao contar notas: {e}")
+        except Exception:
             return 0
     
     def _clicar_botao_baixar_xml(self) -> bool:
@@ -76,7 +70,6 @@ class GerenciadorDownload:
                         botao = self.driver.find_element(*seletor)
                         if botao.is_displayed() and botao.is_enabled():
                             self.driver.execute_script("arguments[0].click();", botao)
-                            logger.debug(f"Botão Baixar XML encontrado e clicado: {seletor[1]}")  # DEBUG
                             return True
                     except:
                         continue
@@ -89,8 +82,6 @@ class GerenciadorDownload:
     
     def _processar_modal_download(self) -> bool:
         """Processa a modal de confirmação de download"""
-        logger.debug("Processando modal de download...")  # DEBUG
-        
         def tentar_processar_modal():
             try:
                 iframe = self.driver.find_element(By.ID, "iNetaccess")
@@ -100,19 +91,16 @@ class GerenciadorDownload:
                 modal = self.wait.until(
                     EC.visibility_of_element_located((By.XPATH, "//*[contains(text(), 'Confirme a solicitação')]"))
                 )
-                logger.debug("Modal detectada")  # DEBUG
                 
                 # Selecionar opção documentos e eventos
                 opcao = self.driver.find_element(
                     By.XPATH, "//label[contains(text(), 'Baixar documentos e eventos')]"
                 )
                 self.driver.execute_script("arguments[0].click();", opcao)
-                logger.debug("Opção selecionada")  # DEBUG
                 
                 # Clicar em confirmar
                 botao_confirmar = self.driver.find_element(By.ID, "dnwld-all-btn-ok")
                 self.driver.execute_script("arguments[0].click();", botao_confirmar)
-                logger.debug("Download confirmado")  # DEBUG
                 
                 self.driver.switch_to.default_content()
                 time.sleep(3)
@@ -135,8 +123,6 @@ class GerenciadorDownload:
     
     def _processar_historico_downloads(self) -> bool:
         """Processa links do histórico de downloads"""
-        logger.debug("Processando histórico de downloads...")  # DEBUG
-        
         def tentar_processar_historico():
             try:
                 iframe = self.driver.find_element(By.ID, "iNetaccess")
@@ -144,14 +130,12 @@ class GerenciadorDownload:
                 
                 # Buscar todos os links de download
                 links_download = self.driver.find_elements(By.CSS_SELECTOR, "a.btn.btn-info")
-                logger.debug(f"Encontrados {len(links_download)} links de download")  # DEBUG
                 
                 downloads_realizados = 0
                 for link in links_download[:1]:  # Apenas primeiro link
                     try:
                         if "Baixar XML" in link.text:
                             self.driver.execute_script("arguments[0].click();", link)
-                            logger.debug("Download iniciado via histórico")  # DEBUG
                             downloads_realizados += 1
                             time.sleep(2)
                             break  # Apenas um download
@@ -197,8 +181,8 @@ class GerenciadorDownload:
                 
                 return ResultadoDownload(
                     total_encontrado=1 if tem_notas else 0,
-                    total_baixado=1 if arquivos_baixados > 0 else 0,
-                    erros=[], notas_baixadas=[], caminho_download=pasta_destino
+                    total_baixado=len(arquivos_baixados),
+                    erros=[], notas_baixadas=arquivos_baixados, caminho_download=pasta_destino
                 )
             else:
                 return ResultadoDownload(
@@ -216,7 +200,7 @@ class GerenciadorDownload:
         return self.executar_fluxo_download_completo(ie, mes_referencia)
     
     def organizar_arquivos_baixados(self, pasta_destino: str) -> int:
-        arquivos_movidos = 0
+        arquivos_movidos = []
         
         try:
             downloads_dir = Path.home() / "Downloads"
@@ -228,17 +212,14 @@ class GerenciadorDownload:
                     
                 caminho_destino = Path(pasta_destino) / arquivo.name
                 
-                # Se arquivo já existe, substituir 
                 if caminho_destino.exists():
-                    logger.debug(f"Substituindo arquivo existente: {arquivo.name}")  # DEBUG
-                    caminho_destino.unlink()  # Remove o antigo
+                    caminho_destino.unlink() 
                 
                 # Mover arquivo
                 arquivo.rename(caminho_destino)
-                logger.debug(f"Arquivo movido: {arquivo.name}")  # DEBUG
-                arquivos_movidos += 1
+                arquivos_movidos.append(arquivo.name)
                     
-            logger.debug(f"Organizados {arquivos_movidos} arquivo(s)")  # DEBUG
+            logger.info(f"Organizados {len(arquivos_movidos)} arquivo(s) em {pasta_destino}")
             return arquivos_movidos
             
         except Exception as e:
@@ -270,7 +251,6 @@ class GerenciadorDownload:
                 
             # Remover o antigo e mover o novo
             arquivo2.unlink()
-            logger.debug(f"Substituindo arquivo: {arquivo2.name}")  # DEBUG
             return True
                     
         except Exception:
