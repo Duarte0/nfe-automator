@@ -35,7 +35,7 @@ def main():
     
     limpar_logs_antigos(max_logs=3)
     
-    if not LoggingConfig.setup(log_level=logging.DEBUG, log_file="logs/nfe_automation.log", verbose=True):
+    if not LoggingConfig.setup(log_level=logging.DEBUG, log_file="logs/nfe_automation.log", verbose=False):
         return 1
     
     logger = logging.getLogger(__name__)

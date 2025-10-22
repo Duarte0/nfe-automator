@@ -22,6 +22,8 @@ from .processador_ie import ProcessadorIE
 from .iframe_manager import GerenciadorIframe
 from .health_check import HealthCheckDriver
 from .timeout_manager import TimeoutManager
+from .multi_ie_manager import GerenciadorMultiplasEmpresas
+from .timeout_manager import TimeoutManager, TipoOperacao
 
 logger = logging.getLogger(__name__)
 
@@ -71,13 +73,16 @@ class AutomatorSEFAZ:
             self.detector_mudancas = DetectorMudancas(driver)
             self.verificador_estado = VerificadorEstado(driver)
             self.gerenciador_download = GerenciadorDownload(driver)
+            self.gerenciador_multi_ie = GerenciadorMultiplasEmpresas()
             
-            timeout_elementos = self.timeout_manager.get_timeout('element_wait')
+            timeout_elementos = self.timeout_manager.get_timeout(TipoOperacao.ELEMENTO_WAIT)
             self.wait = WebDriverWait(driver, timeout_elementos)
-            self.wait_inteligente = GerenciadorWaitInteligente(driver, self.timeout_manager)
             
             self.health_check = HealthCheckDriver(driver)
+            self.wait_inteligente = GerenciadorWaitInteligente(driver, self.timeout_manager)
             self.gerenciador_iframe = GerenciadorIframe(driver)
+            
+            self.processador_ie = ProcessadorIE(self)
             
             logger.info("WebDriver e utilitários otimizados configurados")
             return True
@@ -168,46 +173,49 @@ class AutomatorSEFAZ:
         logger.info("=" * 50)
     
     def _fazer_login_portal(self) -> bool:
-        logger.info("Efetuando login")
-        
         def tentar_login():
             import time
             inicio = time.time()
+            sucesso = False
             
-            url_anterior = self.driver.current_url
-            self.driver.get(SEFAZ_LOGIN_URL)
-            self.detector_mudancas.aguardar_carregamento()
-            
-            campo_usuario = self.wait_inteligente.aguardar_elemento_ou_alternativas(
-                SELECTORS['login']['usuario']
-            )
-            campo_senha = self.wait_inteligente.aguardar_elemento_ou_alternativas(
-                SELECTORS['login']['senha']
-            )
-            botao_login = self.wait_inteligente.aguardar_elemento_ou_alternativas(
-                SELECTORS['login']['botao_login']
-            )
-            
-            if not all([campo_usuario, campo_senha, botao_login]):
-                logger.error("Elementos de login não encontrados")
-                return False
+            try:
+                url_anterior = self.driver.current_url
+                self.driver.get(SEFAZ_LOGIN_URL)
+                self.detector_mudancas.aguardar_carregamento()
                 
-            campo_usuario.clear()
-            campo_usuario.send_keys(self.config.usuario)
-            campo_senha.clear()
-            campo_senha.send_keys(self.config.senha)
-            botao_login.click()
-            
-            # Usar timeout dinâmico
-            delay_login = self.timeout_manager.get_delay('login_wait')
-            time.sleep(delay_login)
-            
-            mudanca, url_atual = self.detector_mudancas.verificar_mudanca_url(url_anterior)
-            
-            tempo_decorrido = time.time() - inicio
-            self.timeout_manager.registrar_tempo_operacao('login_wait', tempo_decorrido)
-            
-            return not self.verificador_estado.esta_na_pagina_login()
+                campo_usuario = self.wait_inteligente.aguardar_elemento_ou_alternativas(
+                    SELECTORS['login']['usuario']
+                )
+                campo_senha = self.wait_inteligente.aguardar_elemento_ou_alternativas(
+                    SELECTORS['login']['senha']
+                )
+                botao_login = self.wait_inteligente.aguardar_elemento_ou_alternativas(
+                    SELECTORS['login']['botao_login']
+                )
+                
+                if not all([campo_usuario, campo_senha, botao_login]):
+                    logger.error("Elementos de login não encontrados")
+                    return False
+                    
+                campo_usuario.clear()
+                campo_usuario.send_keys(self.config.usuario)
+                campo_senha.clear()
+                campo_senha.send_keys(self.config.senha)
+                botao_login.click()
+                
+                delay_login = self.timeout_manager.get_delay(TipoOperacao.LOGIN)
+                time.sleep(delay_login)
+                
+                mudanca, url_atual = self.detector_mudancas.verificar_mudanca_url(url_anterior)
+                
+                sucesso = not self.verificador_estado.esta_na_pagina_login()
+                return sucesso
+                
+            finally:
+                tempo_decorrido = time.time() - inicio
+                self.timeout_manager.registrar_tempo_operacao(
+                    TipoOperacao.LOGIN, tempo_decorrido, sucesso
+                )
         
         try:
             return gerenciador_retry.executar_com_retry(
@@ -234,54 +242,66 @@ class AutomatorSEFAZ:
         logger.info("Clicando em Acesso Restrito")
         
         def tentar_clicar():
-            time.sleep(3)
-            self.detector_mudancas.aguardar_carregamento()
+            inicio = time.time()
+            sucesso = False
             
-            link_acesso = self.wait_inteligente.aguardar_elemento_ou_alternativas(
-                (By.XPATH, "//h3[contains(text(), 'Acesso Restrito')]"),
-                (By.XPATH, "//a[contains(@href, 'NETACCESS/default.asp')]"),
-                (By.XPATH, "//a[@target='_blank' and contains(@href, 'NETACCESS')]"),
-                (By.XPATH, "//a[contains(@class, 'dashboard-sistemas-item')]"),
-                (By.XPATH, "//a[contains(@href, 'NETACCESS') and contains(@title, 'Acessar')]"),
-                (By.XPATH, "//h3[contains(text(), 'Acesso Restrito')]/ancestor::a"),
-            )
-            
-            if not link_acesso:
-                link_acesso = self.wait_inteligente.buscar_elementos_similares("Acesso Restrito")
+            try:
+                time.sleep(3)
+                self.detector_mudancas.aguardar_carregamento()
                 
-            if not link_acesso:
-                logger.warning("Usando fallback manual para Acesso Restrito")
-                for seletor in [
+                link_acesso = self.wait_inteligente.aguardar_elemento_ou_alternativas(
                     (By.XPATH, "//h3[contains(text(), 'Acesso Restrito')]"),
                     (By.XPATH, "//a[contains(@href, 'NETACCESS/default.asp')]"),
-                ]:
-                    try:
-                        link_acesso = self.driver.find_element(*seletor)
-                        break
-                    except:
-                        continue
-            
-            if not link_acesso:
-                raise Exception("Nenhum seletor de acesso restrito funcionou")
-            
-            aba_original = self.driver.current_window_handle
-            self.driver.execute_script("arguments[0].click();", link_acesso)
-            time.sleep(5)
-            
-            abas = self.driver.window_handles
-            if len(abas) > 1:
-                nova_aba = abas[-1]
-                self.driver.switch_to.window(nova_aba)
-                logger.info("Mudou para nova aba")
+                    (By.XPATH, "//a[@target='_blank' and contains(@href, 'NETACCESS')]"),
+                    (By.XPATH, "//a[contains(@class, 'dashboard-sistemas-item')]"),
+                    (By.XPATH, "//a[contains(@href, 'NETACCESS') and contains(@title, 'Acessar')]"),
+                    (By.XPATH, "//h3[contains(text(), 'Acesso Restrito')]/ancestor::a"),
+                )
                 
-                if self.verificador_estado.esta_no_acesso_restrito():
-                    logger.info("Acesso restrito verificado com sucesso")
+                if not link_acesso:
+                    link_acesso = self.wait_inteligente.buscar_elementos_similares("Acesso Restrito")
+                    
+                if not link_acesso:
+                    logger.warning("Usando fallback manual para Acesso Restrito")
+                    for seletor in [
+                        (By.XPATH, "//h3[contains(text(), 'Acesso Restrito')]"),
+                        (By.XPATH, "//a[contains(@href, 'NETACCESS/default.asp')]"),
+                    ]:
+                        try:
+                            link_acesso = self.driver.find_element(*seletor)
+                            break
+                        except:
+                            continue
+                
+                if not link_acesso:
+                    raise Exception("Nenhum seletor de acesso restrito funcionou")
+                
+                aba_original = self.driver.current_window_handle
+                self.driver.execute_script("arguments[0].click();", link_acesso)
+                time.sleep(5)
+                
+                abas = self.driver.window_handles
+                if len(abas) > 1:
+                    nova_aba = abas[-1]
+                    self.driver.switch_to.window(nova_aba)
+                    logger.info("Mudou para nova aba")
+                    
+                    if self.verificador_estado.esta_no_acesso_restrito():
+                        logger.info("Acesso restrito verificado com sucesso")
+                    else:
+                        logger.warning("Possivelmente não está no acesso restrito")
                 else:
-                    logger.warning("Possivelmente não está no acesso restrito")
-            else:
-                logger.info("Nenhuma nova aba aberta")
-            
-            return True
+                    logger.info("Nenhuma nova aba aberta")
+                
+                sucesso = True
+                return True
+                
+            finally:
+                tempo_decorrido = time.time() - inicio
+                # CORREÇÃO: Registrar operação de clique
+                self.timeout_manager.registrar_tempo_operacao(
+                    TipoOperacao.ACAO_CLIQUE, tempo_decorrido, sucesso
+                )
         
         try:
             return gerenciador_retry.executar_com_retry(
@@ -298,49 +318,60 @@ class AutomatorSEFAZ:
         logger.info("Acessando iframe e buscando Baixar XML NFE")
         
         def tentar_acessar():
-            logger.info("Procurando iframe...")
+            inicio = time.time()
+            sucesso = False
             
             try:
-                iframe = self.driver.find_element(By.ID, "iNetaccess")
-                self.driver.switch_to.frame(iframe)
-                logger.info("Dentro do iframe!")
-            except:
-                logger.error("IFRAME NAO ENCONTRADO!")
-                return False
-            
-            logger.info("Buscando Baixar XML NFE...")
-            
-            # USAR MÉTODO PRIORITÁRIO
-            link_encontrado = self._encontrar_link_baixar_xml()
-            
-            if not link_encontrado:
-                logger.error("Link nao encontrado dentro do iframe")
-                self.driver.switch_to.default_content()
-                return False
-            
-            logger.info("Clicando no link...")
-            try:
-                self.driver.execute_script("arguments[0].click();", link_encontrado)
-                logger.info("Clicado via JavaScript")
-            except Exception as e:
-                logger.error(f"Erro ao clicar: {e}")
-                self.driver.switch_to.default_content()
-                return False
-            
-            logger.info("Aguardando acao do clique...")
-            time.sleep(5)
-            
-            # Verificar se redirecionou
-            try:
-                current_url = self.driver.current_url
-                if "consulta-notas-recebidas" in current_url:
-                    logger.info("REDIRECIONADO PARA PAGINA DE CONSULTA!")
+                logger.info("Procurando iframe...")
+                
+                try:
+                    iframe = self.driver.find_element(By.ID, "iNetaccess")
+                    self.driver.switch_to.frame(iframe)
+                    logger.info("Dentro do iframe!")
+                except:
+                    logger.error("IFRAME NAO ENCONTRADO!")
+                    return False
+                
+                logger.info("Buscando Baixar XML NFE...")
+                
+                link_encontrado = self._encontrar_link_baixar_xml()
+                
+                if not link_encontrado:
+                    logger.error("Link nao encontrado dentro do iframe")
+                    self.driver.switch_to.default_content()
+                    return False
+                
+                logger.info("Clicando no link...")
+                try:
+                    self.driver.execute_script("arguments[0].click();", link_encontrado)
+                    logger.info("Clicado via JavaScript")
+                except Exception as e:
+                    logger.error(f"Erro ao clicar: {e}")
+                    self.driver.switch_to.default_content()
+                    return False
+                
+                logger.info("Aguardando acao do clique...")
+                time.sleep(5)
+                
+                try:
+                    current_url = self.driver.current_url
+                    if "consulta-notas-recebidas" in current_url:
+                        logger.info("REDIRECIONADO PARA PAGINA DE CONSULTA!")
+                        sucesso = True
+                        return True
+                    else:
+                        logger.info("Permaneceu na mesma pagina")
+                        sucesso = True
+                        return True
+                except:
+                    sucesso = True
                     return True
-                else:
-                    logger.info("Permaneceu na mesma pagina")
-                    return True
-            except:
-                return True
+                    
+            finally:
+                tempo_decorrido = time.time() - inicio
+                self.timeout_manager.registrar_tempo_operacao(
+                    TipoOperacao.PAGINA_CARREGAMENTO, tempo_decorrido, sucesso
+                )
         
         return gerenciador_retry.executar_com_retry(
             tentar_acessar,
@@ -353,19 +384,30 @@ class AutomatorSEFAZ:
         logger.info("Aguardando popup de login...")
         
         def tentar_popup():
-            logger.info("Aguardando ate 15 segundos para popup aparecer...")
+            inicio = time.time()
+            sucesso = False
             
-            timeout_popup = self.timeout_manager.get_timeout('popup_wait')
-            for tentativa in range(timeout_popup):
-                if self._verificar_popup_login():
-                    logger.info("POPUP DETECTADO! Preenchendo...")
-                    return self._preencher_popup_login()
+            try:
+                logger.info("Aguardando até 15 segundos para popup aparecer...")
                 
-                logger.info(f"Aguardando popup... ({tentativa + 1}/15)")
-                time.sleep(1)
-            
-            logger.error("TIMEOUT: Popup de login nao apareceu apos 15 segundos")
-            return False
+                timeout_popup = self.timeout_manager.get_timeout(TipoOperacao.POPUP)
+                for tentativa in range(timeout_popup):
+                    if self._verificar_popup_login():
+                        logger.info("POPUP DETECTADO! Preenchendo...")
+                        sucesso = self._preencher_popup_login()
+                        return sucesso
+                    
+                    logger.info(f"Aguardando popup... ({tentativa + 1}/{timeout_popup})")
+                    time.sleep(1)
+                
+                logger.error("TIMEOUT: Popup de login não apareceu após 15 segundos")
+                return False
+                
+            finally:
+                tempo_decorrido = time.time() - inicio
+                self.timeout_manager.registrar_tempo_operacao(
+                    TipoOperacao.POPUP, tempo_decorrido, sucesso
+                )
         
         try:
             return gerenciador_retry.executar_com_retry(
@@ -443,34 +485,45 @@ class AutomatorSEFAZ:
             return False
     
     def _clicar_baixar_xml_apos_login(self) -> bool:
-        logger.info("Clicando novamente em Baixar XML NFE apos login...")
+        logger.info("Clicando novamente em Baixar XML NFE após login...")
         
         def tentar_clicar_apos_login():
-            delay_acao = self.timeout_manager.get_delay('action_delay')
-            time.sleep(delay_acao)
+            inicio = time.time()
+            sucesso = False
             
             try:
-                iframe = self.driver.find_element(By.ID, "iNetaccess")
-                self.driver.switch_to.frame(iframe)
-            except:
-                return False
-            
-            # USAR MÉTODO PRIORITÁRIO
-            link_encontrado = self._encontrar_link_baixar_xml()
-            
-            if not link_encontrado:
+                delay_acao = self.timeout_manager.get_delay(TipoOperacao.ACAO_CLIQUE)
+                time.sleep(delay_acao)
+                
+                try:
+                    iframe = self.driver.find_element(By.ID, "iNetaccess")
+                    self.driver.switch_to.frame(iframe)
+                except:
+                    return False
+                
+                link_encontrado = self._encontrar_link_baixar_xml()
+                
+                if not link_encontrado:
+                    self.driver.switch_to.default_content()
+                    return False
+                
+                try:
+                    self.driver.execute_script("arguments[0].click();", link_encontrado)
+                except:
+                    self.driver.switch_to.default_content()
+                    return False
+                
                 self.driver.switch_to.default_content()
-                return False
-            
-            try:
-                self.driver.execute_script("arguments[0].click();", link_encontrado)
-            except:
-                self.driver.switch_to.default_content()
-                return False
-            
-            self.driver.switch_to.default_content()
-            time.sleep(5)
-            return True
+                time.sleep(5)
+                
+                sucesso = True
+                return True
+                
+            finally:
+                tempo_decorrido = time.time() - inicio
+                self.timeout_manager.registrar_tempo_operacao(
+                    TipoOperacao.ACAO_CLIQUE, tempo_decorrido, sucesso
+                )
         
         return gerenciador_retry.executar_com_retry(
             tentar_clicar_apos_login,
@@ -514,72 +567,183 @@ class AutomatorSEFAZ:
         """CAPTCHA REAL - aguarda resolução manual"""
         logger.info("CAPTCHA CLOUDFLARE REQUERIDO")
         
-        print("\n" + "="*60)
-        print("CAPTCHA REQUERIDO - RESOLUÇÃO MANUAL")
-        print("="*60)
-        print("1. Resolva o CAPTCHA no navegador")
-        print("2. Aguarde o processamento completo")
-        print("3. A página deve recarregar automaticamente")
-        print("4. Pressione ENTER apenas quando o CAPTCHA estiver resolvido")
-        print("="*60)
+        inicio = time.time()
+        sucesso = False
         
         try:
-            input("Pressione ENTER após resolver o CAPTCHA: ")
-            time.sleep(3)
-            logger.info("CAPTCHA resolvido - continuando fluxo")
-            return True
+            print("\n" + "="*60)
+            print("CAPTCHA REQUERIDO - RESOLUÇÃO MANUAL")
+            print("="*60)
+            print("1. Resolva o CAPTCHA no navegador")
+            print("2. Aguarde o processamento completo")
+            print("3. A página deve recarregar automaticamente")
+            print("4. Pressione ENTER apenas quando o CAPTCHA estiver resolvido")
+            print("="*60)
             
-        except Exception as e:
-            logger.error(f"Erro no CAPTCHA manual: {e}")
-            return False
+            try:
+                input("Pressione ENTER após resolver o CAPTCHA: ")
+                time.sleep(3)
+                logger.info("CAPTCHA resolvido - continuando fluxo")
+                sucesso = True
+                return True
+                
+            except Exception as e:
+                logger.error(f"Erro no CAPTCHA manual: {e}")
+                return False
+                
+        finally:
+            tempo_decorrido = time.time() - inicio
+            self.timeout_manager.registrar_tempo_operacao(
+                TipoOperacao.CAPTCHA, tempo_decorrido, sucesso
+            )
     
     def _processar_multiplas_ies(self) -> bool:
         logger.info(f"Iniciando processamento de IEs")
         
-        if not self.processador_ie:
-            self.processador_ie = ProcessadorIE(self)
+        inicio_total = time.time()
+        sucesso_total = False
+        ies_com_notas = 0
         
-        empresas = self.carregador_ies.carregar_empresas_validas()
-        if not empresas:
-            return False
-        
-        from src.automacao.multi_ie_manager import GerenciadorMultiplasEmpresas
-        gerenciador_estado = GerenciadorMultiplasEmpresas()
-        gerenciador_estado.adicionar_empresas(empresas)
-        
-        ies_com_notas = []
-        
-        for i, empresa in enumerate(empresas, 1):
-            if i % 10 == 1 or i == len(empresas):
-                logger.info(f"[{i}/{len(empresas)}] {empresa['nome']} ({empresa['ie']})")
+        try:
+            if not self.processador_ie:
+                self.processador_ie = ProcessadorIE(self)
             
-            try:
-                if self.processador_ie.processar_ie(empresa['ie'], empresa['nome']):
-                    ies_com_notas.append(empresa['ie'])
-                    gerenciador_estado.marcar_concluido(empresa)
-            except Exception as e:
-                logger.error(f"  ✗ Erro: {e}")
-                gerenciador_estado.marcar_erro(empresa, str(e))
-        
-        logger.info(f"Concluído: {len(ies_com_notas)} empresas com notas de {len(empresas)} processadas")
-        
-        relatorio = gerenciador_estado.obter_relatorio()
-        logger.info(f"Relatório estado: {relatorio}")
-        
-        return len(ies_com_notas) > 0
+            empresas = self.carregador_ies.carregar_empresas_validas()
+            if not empresas:
+                logger.error("Nenhuma empresa válida encontrada para processamento")
+                return False
+            
+            sessoes_interrompidas = self.gerenciador_multi_ie.recuperar_sessao_interrompida()
+            if sessoes_interrompidas:
+                logger.info(f"Encontradas {len(sessoes_interrompidas)} sessões interrompidas para retomada")
+                for sessao in sessoes_interrompidas:
+                    empresa = {'ie': sessao['ie'], 'nome': sessao['nome']}
+                    try:
+                        inicio_ie = time.time()
+                        sucesso_ie = False
+                        
+                        try:
+                            if self.processador_ie.processar_ie(sessao['ie'], sessao['nome']):
+                                self.gerenciador_multi_ie.marcar_concluido(empresa)
+                                logger.info(f"✓ Sessão interrompida concluída: {sessao['nome']} ({sessao['ie']})")
+                                sucesso_ie = True
+                                ies_com_notas += 1
+                        except Exception as e:
+                            logger.error(f"✗ Erro ao retomar sessão {sessao['ie']}: {e}")
+                            self.gerenciador_multi_ie.marcar_erro(empresa, str(e))
+                        
+                        finally:
+                            tempo_ie = time.time() - inicio_ie
+                            self.timeout_manager.registrar_tempo_operacao(
+                                TipoOperacao.CONSULTA, tempo_ie, sucesso_ie
+                            )
+                            
+                    except Exception as e:
+                        logger.error(f"Erro crítico ao processar sessão interrompida: {e}")
+            
+            self.gerenciador_multi_ie.adicionar_empresas(empresas)
+            
+            empresas_para_processar = empresas.copy()
+            
+            if sessoes_interrompidas:
+                ies_processadas = {sessao['ie'] for sessao in sessoes_interrompidas}
+                empresas_para_processar = [emp for emp in empresas if emp['ie'] not in ies_processadas]
+                logger.info(f"{len(ies_processadas)} empresas já processadas, {len(empresas_para_processar)} restantes")
+            
+            for i, empresa in enumerate(empresas_para_processar, 1):
+                inicio_ie = time.time()
+                sucesso_ie = False
+                
+                try:
+                    if i % 10 == 1 or i == len(empresas_para_processar):
+                        logger.info(f"[{i}/{len(empresas_para_processar)}] {empresa['nome']} ({empresa['ie']})")
+                    
+                    self.gerenciador_multi_ie.marcar_em_andamento(empresa)
+                    
+                    if self.processador_ie.processar_ie(empresa['ie'], empresa['nome']):
+                        ies_com_notas += 1
+                        self.gerenciador_multi_ie.marcar_concluido(empresa)
+                        logger.info(f"  ✓ Concluído com notas")
+                        sucesso_ie = True
+                    else:
+                        self.gerenciador_multi_ie.marcar_concluido(empresa)  
+                        logger.info(f"  ✓ Concluído sem notas")
+                        sucesso_ie = True
+                        
+                except Exception as e:
+                    logger.error(f"  ✗ Erro: {e}")
+                    self.gerenciador_multi_ie.marcar_erro(empresa, str(e))
+                
+                finally:
+                    tempo_ie = time.time() - inicio_ie
+                    self.timeout_manager.registrar_tempo_operacao(
+                        TipoOperacao.CONSULTA, tempo_ie, sucesso_ie
+                    )
+            
+            removidos = self.gerenciador_multi_ie.limpar_checkpoints_antigos()
+            if removidos > 0:
+                logger.info(f"Checkpoints antigos removidos: {removidos}")
+            
+            logger.info(f"Concluído: {ies_com_notas} empresas com notas de {len(empresas)} processadas")
+            
+            relatorio = self.gerenciador_multi_ie.obter_relatorio_detalhado()
+            self._mostrar_relatorio_final(relatorio)
+            
+            sucesso_total = ies_com_notas > 0
+            return sucesso_total
+            
+        finally:
+            tempo_total = time.time() - inicio_total
+            self.timeout_manager.registrar_tempo_operacao(
+                TipoOperacao.DOWNLOAD, tempo_total, sucesso_total
+            )
 
     def _mostrar_relatorio_final(self, relatorio: Dict):
         print("\n" + "="*60)
-        print("RELATÓRIO FINAL - PROCESSAMENTO")
+        print("RELATÓRIO FINAL - PROCESSAMENTO COM CHECKPOINTS")
         print("="*60)
         print(f"Total IEs: {relatorio['total']}")
         print(f"Concluídas: {relatorio['concluidos']}")
         print(f"Com erro: {relatorio['erros']}")
+        print(f"Pendentes: {relatorio['pendentes']}")
         print(f"Progresso: {relatorio['progresso']}")
+        
+        if relatorio['empresas_com_notas']:
+            print(f"\nEmpresas com notas ({len(relatorio['empresas_com_notas'])}):")
+            for empresa in relatorio['empresas_com_notas'][:5]: 
+                print(f"  ✓ {empresa}")
+            if len(relatorio['empresas_com_notas']) > 5:
+                print(f"  ... e mais {len(relatorio['empresas_com_notas']) - 5}")
+        
+        if relatorio['empresas_com_erro']:
+            print(f"\nEmpresas com erro ({len(relatorio['empresas_com_erro'])}):")
+            for empresa in relatorio['empresas_com_erro'][:3]: 
+                print(f"  ✗ {empresa}")
+            if len(relatorio['empresas_com_erro']) > 3:
+                print(f"  ... e mais {len(relatorio['empresas_com_erro']) - 3}")
+        
         print("="*60)
-    
+        
     def limpar_recursos(self):
-        logger.info("Navegador mantido aberto")
+        """Limpa recursos e salva estado final"""
+        logger.info("Finalizando automator e salvando estado")
+        
+        if hasattr(self, 'gerenciador_multi_ie'):
+            try:
+                self.gerenciador_multi_ie.salvar_estado()
+                logger.info("Estado do processamento salvo para retomada futura")
+            except Exception as e:
+                logger.error(f"Erro ao salvar estado final: {e}")
+        
+        if hasattr(self, 'gerenciador_driver') and self.gerenciador_driver.driver:
+            try:
+                self.gerenciador_driver.driver.quit()
+                logger.info("WebDriver finalizado")
+            except Exception as e:
+                logger.warning(f"Erro ao finalizar WebDriver: {e}")
+        
         print("\n" + "="*60)
-        print("Fluxo concluido - Navegador aberto para inspecao")
+        print("PROCESSAMENTO CONCLUÍDO")
+        print("="*60)
+        print("✓ Estado salvo para retomada futura")
         print("="*60)
