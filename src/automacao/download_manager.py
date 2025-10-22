@@ -12,6 +12,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from .retry_manager import gerenciador_retry
 from .iframe_manager import GerenciadorIframe
 from ..utils.data_models import ResultadoDownload
+from .timeout_manager import TipoOperacao
 
 logger = logging.getLogger(__name__)
 
@@ -109,23 +110,21 @@ class GerenciadorDownload:
         """Processa a modal de confirmação de download"""
         def tentar_processar_modal():
             try:
-                timeout_modal = self._obter_timeout_operacao('modal')  # NOVO
-                wait_modal = WebDriverWait(self.driver, timeout_modal)  # NOVO
+                timeout_modal = self._obter_timeout_operacao(TipoOperacao.MODAL)
+                wait_modal = WebDriverWait(self.driver, timeout_modal)
                 
                 iframe = self.driver.find_element(By.ID, "iNetaccess")
                 self.driver.switch_to.frame(iframe)
                 
-                # Aguardar modal aparecer com timeout específico
-                modal = wait_modal.until(  # MODIFICADO
+                wait_modal.until( 
                     EC.visibility_of_element_located((By.XPATH, "//*[contains(text(), 'Confirme a solicitação')]"))
                 )
-                # Selecionar opção documentos e eventos
+                
                 opcao = self.driver.find_element(
                     By.XPATH, "//label[contains(text(), 'Baixar documentos e eventos')]"
                 )
                 self.driver.execute_script("arguments[0].click();", opcao)
                 
-                # Clicar em confirmar
                 botao_confirmar = self.driver.find_element(By.ID, "dnwld-all-btn-ok")
                 self.driver.execute_script("arguments[0].click();", botao_confirmar)
                 
@@ -155,17 +154,16 @@ class GerenciadorDownload:
                 iframe = self.driver.find_element(By.ID, "iNetaccess")
                 self.driver.switch_to.frame(iframe)
                 
-                # Buscar todos os links de download
                 links_download = self.driver.find_elements(By.CSS_SELECTOR, "a.btn.btn-info")
                 
                 downloads_realizados = 0
-                for link in links_download[:1]:  # Apenas primeiro link
+                for link in links_download[:1]: 
                     try:
                         if "Baixar XML" in link.text:
                             self.driver.execute_script("arguments[0].click();", link)
                             downloads_realizados += 1
                             time.sleep(2)
-                            break  # Apenas um download
+                            break 
                     except Exception as e:
                         logger.error(f"Erro ao clicar link: {e}")
                         continue
@@ -242,7 +240,6 @@ class GerenciadorDownload:
                 if caminho_destino.exists():
                     caminho_destino.unlink() 
                 
-                # Mover arquivo
                 arquivo.rename(caminho_destino)
                 arquivos_movidos.append(arquivo.name)
                     
@@ -276,21 +273,14 @@ class GerenciadorDownload:
             if not (arquivo1.exists() and arquivo2.exists()):
                 return False
                 
-            # Remover o antigo e mover o novo
             arquivo2.unlink()
             return True
                     
         except Exception:
             return False
         
-    def _obter_timeout_operacao(self, operacao: str) -> int:
-        """Timeout específico por tipo de operação"""
-        timeouts = {
-            'modal': 10,
-            'download_link': 30,
-            'arquivo_download': 60,
-            'processamento_servidor': 15
-        }
-        timeout = timeouts.get(operacao, 15)
-        logger.debug(f"Timeout para {operacao}: {timeout}s")
-        return timeout
+    def _obter_timeout_operacao(self, tipo: TipoOperacao) -> int:
+        """Wrapper para obter timeout do gerenciador"""
+        if hasattr(self, 'automator') and hasattr(self.automator, 'timeout_manager'):
+            return self.automator.timeout_manager.get_timeout(tipo)
+        return 15
