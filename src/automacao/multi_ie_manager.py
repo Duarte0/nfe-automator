@@ -188,15 +188,3 @@ class GerenciadorMultiplasEmpresas:
             'total_empresas': len(self.estados),
             'empresas_processadas': sum(1 for e in self.estados.values() if e.tentativas > 0)
         }
-
-    # Método legado para compatibilidade
-    def adicionar_ies(self, inscricoes: List[str]):
-        """Método legado - adiciona apenas IEs para compatibilidade"""
-        empresas = [{'ie': ie, 'nome': f"Empresa_{ie}"} for ie in inscricoes]
-        self.adicionar_empresas(empresas)
-
-    # Método legado para compatibilidade
-    def obter_proxima_ie(self) -> Optional[str]:
-        """Método legado - retorna apenas IE para compatibilidade"""
-        empresa = self.obter_proxima_empresa()
-        return empresa['ie'] if empresa else None

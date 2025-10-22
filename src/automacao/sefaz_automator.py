@@ -167,16 +167,6 @@ class AutomatorSEFAZ:
         
         logger.info("=" * 50)
     
-    def _mostrar_mensagem_final(self, sucesso: bool, tempo_total: float = 0):
-        print("\n" + "="*70)
-        if sucesso:
-            print("SUCESSO! Fluxo executado")
-            print(f"Tempo: {tempo_total:.1f}s")
-        else:
-            print("FALHA - Verifique o problema")
-        print("Navegador mantido aberto")
-        print("="*70)
-    
     def _fazer_login_portal(self) -> bool:
         logger.info("Efetuando login")
         
@@ -549,25 +539,33 @@ class AutomatorSEFAZ:
         if not self.processador_ie:
             self.processador_ie = ProcessadorIE(self)
         
-        ies_validas = self.carregador_ies.carregar_ies_validas()
-        if not ies_validas:
+        empresas = self.carregador_ies.carregar_empresas_validas()
+        if not empresas:
             return False
+        
+        from src.automacao.multi_ie_manager import GerenciadorMultiplasEmpresas
+        gerenciador_estado = GerenciadorMultiplasEmpresas()
+        gerenciador_estado.adicionar_empresas(empresas)
         
         ies_com_notas = []
         
-        for i, ie in enumerate(ies_validas, 1):
-            if i % 10 == 1 or i == len(ies_validas):
-                logger.info(f"[{i}/{len(ies_validas)}] IE {ie}")
-            else:
-                logger.debug(f"[{i}/{len(ies_validas)}] IE {ie}") 
+        for i, empresa in enumerate(empresas, 1):
+            if i % 10 == 1 or i == len(empresas):
+                logger.info(f"[{i}/{len(empresas)}] {empresa['nome']} ({empresa['ie']})")
             
             try:
-                if self.processador_ie.processar_ie(ie):
-                    ies_com_notas.append(ie)
+                if self.processador_ie.processar_ie(empresa['ie'], empresa['nome']):
+                    ies_com_notas.append(empresa['ie'])
+                    gerenciador_estado.marcar_concluido(empresa)
             except Exception as e:
                 logger.error(f"  ✗ Erro: {e}")
+                gerenciador_estado.marcar_erro(empresa, str(e))
         
-        logger.info(f"Concluído: {len(ies_com_notas)} IEs com notas de {len(ies_validas)} processadas")
+        logger.info(f"Concluído: {len(ies_com_notas)} empresas com notas de {len(empresas)} processadas")
+        
+        relatorio = gerenciador_estado.obter_relatorio()
+        logger.info(f"Relatório estado: {relatorio}")
+        
         return len(ies_com_notas) > 0
 
     def _mostrar_relatorio_final(self, relatorio: Dict):

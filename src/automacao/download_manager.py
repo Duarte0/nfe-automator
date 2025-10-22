@@ -1,3 +1,4 @@
+import re
 import os
 import time
 import logging
@@ -21,38 +22,62 @@ class GerenciadorDownload:
         self.driver = driver
         self.wait = WebDriverWait(driver, 15)
         self.gerenciador_iframe = GerenciadorIframe(driver)
+        self.estatisticas_erros = {}
+        
+    def _deve_tentar_novamente(self, erro: Exception, tentativa: int, operacao: str) -> bool:
+        """Decide se deve retentar baseado no tipo de erro"""
+        erros_fatais = [
+            'FileNotFoundError',
+            'PermissionError', 
+            'ElementNotInteractableException'
+        ]
+        
+        self.estatisticas_erros[operacao] = self.estatisticas_erros.get(operacao, 0) + 1
+        
+        erro_str = str(erro).lower()
+        
+        if any(msg in erro_str for msg in ['timeout', 'stale', 'click', 'temporarily']):
+            return True
+        
+        if any(fatal in str(type(erro)) for fatal in erros_fatais):
+            return False
+            
+        return tentativa < 2
     
-    def criar_estrutura_pastas(self, ie: str, data_referencia: datetime = None) -> str:
+    def criar_estrutura_pastas(self, nome_empresa: str, data_referencia: datetime = None) -> str:
         if data_referencia is None:
             data_referencia = datetime.now()
             
         ano = data_referencia.strftime("%Y")
         mes = data_referencia.strftime("%m")
         
-        pasta_destino = Path.home() / "Downloads" / "SEFAZ" / f"IE_{ie}" / ano / mes
+        # Limpar caracteres inválidos do nome
+        nome_limpo = re.sub(r'[<>:"/\\|?*]', '_', nome_empresa.strip())
+        
+        pasta_destino = Path.home() / "Downloads" / "SEFAZ" / nome_limpo / ano / mes
         os.makedirs(pasta_destino, exist_ok=True)
         
         return str(pasta_destino)
     
-    def contar_notas_tabela(self) -> int:
+    def tem_notas_tabela(self) -> bool:
+        """Verifica rapidamente se existe pelo menos uma nota na tabela"""
         try:
             with self.gerenciador_iframe.contexto_iframe((By.ID, "iNetaccess")):
-                seletores_tabela = [
+                seletores_rapidos = [
                     "//table//tr[contains(@class, 'tbody-row')]",
                     "//table//tr[position()>1]",
                     "//tbody/tr"
                 ]
                 
-                for seletor in seletores_tabela:
+                for seletor in seletores_rapidos:
                     try:
-                        linhas = self.driver.find_elements(By.XPATH, seletor)
-                        if linhas:
-                            return len(linhas)
+                        if self.driver.find_elements(By.XPATH, seletor):
+                            return True
                     except:
                         continue
-                return 0
+                return False
         except Exception:
-            return 0
+            return False
     
     def _clicar_botao_baixar_xml(self) -> bool:
         def tentar_clicar_botao():
@@ -84,14 +109,16 @@ class GerenciadorDownload:
         """Processa a modal de confirmação de download"""
         def tentar_processar_modal():
             try:
+                timeout_modal = self._obter_timeout_operacao('modal')  # NOVO
+                wait_modal = WebDriverWait(self.driver, timeout_modal)  # NOVO
+                
                 iframe = self.driver.find_element(By.ID, "iNetaccess")
                 self.driver.switch_to.frame(iframe)
                 
-                # Aguardar modal aparecer
-                modal = self.wait.until(
+                # Aguardar modal aparecer com timeout específico
+                modal = wait_modal.until(  # MODIFICADO
                     EC.visibility_of_element_located((By.XPATH, "//*[contains(text(), 'Confirme a solicitação')]"))
                 )
-                
                 # Selecionar opção documentos e eventos
                 opcao = self.driver.find_element(
                     By.XPATH, "//label[contains(text(), 'Baixar documentos e eventos')]"
@@ -161,8 +188,8 @@ class GerenciadorDownload:
             nome_operacao="Processar Histórico"
         )
     
-    def executar_fluxo_download_completo(self, ie: str, mes_referencia: datetime = None) -> ResultadoDownload:
-        tem_notas = self.contar_notas_tabela() > 0
+    def executar_fluxo_download_completo(self, nome_empresa: str, mes_referencia: datetime = None) -> ResultadoDownload:
+        tem_notas = self.tem_notas_tabela() > 0
         
         if not tem_notas:
             return ResultadoDownload(
@@ -170,7 +197,7 @@ class GerenciadorDownload:
                 notas_baixadas=[], caminho_download=""
             )
         
-        pasta_destino = self.criar_estrutura_pastas(ie, mes_referencia)
+        pasta_destino = self.criar_estrutura_pastas(nome_empresa, mes_referencia)
         
         try:
             if (self._clicar_botao_baixar_xml() and 
@@ -255,3 +282,15 @@ class GerenciadorDownload:
                     
         except Exception:
             return False
+        
+    def _obter_timeout_operacao(self, operacao: str) -> int:
+        """Timeout específico por tipo de operação"""
+        timeouts = {
+            'modal': 10,
+            'download_link': 30,
+            'arquivo_download': 60,
+            'processamento_servidor': 15
+        }
+        timeout = timeouts.get(operacao, 15)
+        logger.debug(f"Timeout para {operacao}: {timeout}s")
+        return timeout

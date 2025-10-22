@@ -22,30 +22,31 @@ class ProcessadorIE:
         self.gerenciador_download = automator.gerenciador_download
         self.gerenciador_iframe = GerenciadorIframe(automator.driver)
         
-    def processar_ie(self, ie: str) -> bool:
+    def processar_ie(self, ie: str, nome_empresa: str = "") -> bool:
         """Processa uma IE individual de forma consolidada"""
-        logger.info(f"Processando IE: {ie}")
+        logger.info(f"Processando IE: {ie} - Empresa: {nome_empresa}")
         
         # Usar health check se disponível
         if hasattr(self.automator, 'health_check') and self.automator.health_check:
             def operacao_completa():
-                return self._executar_fluxo_ie(ie)
-            
+                return self._executar_fluxo_ie(ie, nome_empresa) 
+                
             return self.automator.health_check.executar_com_verificacao(
                 operacao_completa, f"Processar IE {ie}", max_tentativas=2
             )
         else:
             # Fallback para fluxo normal
-            return self._executar_fluxo_ie(ie)
+            return self._executar_fluxo_ie(ie, nome_empresa)  
         
-    def _executar_fluxo_ie(self, ie: str) -> bool:
+    def _executar_fluxo_ie(self, ie: str, nome_empresa: str = "") -> bool:
         """Fluxo principal de processamento de IE"""
+        
         if not self._preencher_formulario(ie):
             logger.error("Falha ao preencher formulário")
             return False
         
         if not self._aguardar_captcha_manual():
-            logger.error("Falha no CAPTCHA")
+            logger.error("Falha na resolução do CAPTCHA")
             return False
         
         if not self._executar_consulta(ie):
@@ -53,11 +54,12 @@ class ProcessadorIE:
             return False
         
         if not self._validar_resultados(ie):
+            logger.info("Nenhuma nota encontrada")
             return False
         
-        total_notas = self.gerenciador_download.contar_notas_tabela()
+        total_notas = self.gerenciador_download.tem_notas_tabela()
         if total_notas > 0:
-            return self._processar_download(ie)
+            return self._processar_download(ie, nome_empresa)
         else:
             return False
     
@@ -245,26 +247,27 @@ class ProcessadorIE:
         )
     
     def _validar_resultados(self, ie: str) -> bool:
-        """Verifica apenas se existe pelo menos uma nota"""
+        """Verifica se existe pelo menos uma nota"""
+        tem_notas = self.gerenciador_download.tem_notas_tabela()
+        logger.info(f"Notas encontradas para IE {ie}: {'SIM' if tem_notas else 'NÃO'}")
+        return tem_notas
+    
+    def _processar_download(self, ie: str, nome_empresa: str) -> bool:
         try:
-            total_notas = self.gerenciador_download.contar_notas_tabela()
-            return total_notas > 0  # Só importa se tem pelo menos 1
-        except Exception:
-            return False
-
-    def _processar_download(self, ie: str) -> bool:
-        """Processa download - só importa se conseguiu baixar"""
-        try:
+            logger.info(f"=== INICIANDO DOWNLOAD: {nome_empresa} ({ie}) ===")
             from datetime import datetime
             data_referencia = datetime.strptime(self.config.data_inicio, "%d/%m/%Y")
             
-            resultado = self.gerenciador_download.executar_fluxo_download_completo(ie, data_referencia)
+            resultado = self.gerenciador_download.executar_fluxo_download_completo(nome_empresa, data_referencia)
+            logger.info(f"=== RESULTADO DOWNLOAD: {resultado.total_baixado}/{resultado.total_encontrado} arquivos ===")
+            logger.info(f"=== ERROS: {resultado.erros} ===")
             
             if resultado.total_baixado > 0:
                 self._voltar_pagina_consulta()
                 return True
             return False
-        except Exception:
+        except Exception as e:
+            logger.error(f"Erro processar download: {e}")
             return False
         
     def _voltar_pagina_consulta(self) -> bool:

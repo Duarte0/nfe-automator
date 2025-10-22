@@ -53,25 +53,3 @@ class ValidadorIE:
         
         logger.info(f"Total IEs válidas: {len(ies_validas)}")
         return ies_validas
-    
-    @staticmethod
-    def validar_lote_ies(ies: List[str]) -> dict:
-        """Retorna relatório detalhado da validação do lote"""
-        relatorio = {
-            'total_ies': len(ies),
-            'validas': [],
-            'invalidas': [],
-            'taxa_validade': 0
-        }
-        
-        for ie in ies:
-            valido, resultado = ValidadorIE.validar_ie(ie)
-            if valido:
-                relatorio['validas'].append(resultado)
-            else:
-                relatorio['invalidas'].append({'ie': ie, 'motivo': resultado})
-        
-        if relatorio['total_ies'] > 0:
-            relatorio['taxa_validade'] = (len(relatorio['validas']) / relatorio['total_ies']) * 100
-        
-        return relatorio
