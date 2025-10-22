@@ -3,8 +3,11 @@ Processador consolidado de IEs individuais
 """
 import logging
 import time
+from typing import Dict, Optional
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
+
+from .timeout_manager import TipoOperacao
 
 from .retry_manager import gerenciador_retry
 from .iframe_manager import GerenciadorIframe
@@ -21,68 +24,213 @@ class ProcessadorIE:
         self.config = automator.config
         self.gerenciador_download = automator.gerenciador_download
         self.gerenciador_iframe = GerenciadorIframe(automator.driver)
+        self.gerenciador_estado = None
+        if hasattr(automator, 'gerenciador_multi_ie'):
+            self.gerenciador_estado = automator.gerenciador_multi_ie
         
     def processar_ie(self, ie: str, nome_empresa: str = "") -> bool:
-        """Processa uma IE individual de forma consolidada"""
+        """Processa uma IE individual com suporte a checkpoints e health check"""
         logger.info(f"Processando IE: {ie} - Empresa: {nome_empresa}")
         
-        # Usar health check se disponível
+        empresa = {'ie': ie, 'nome': nome_empresa}
+        
         if hasattr(self.automator, 'health_check') and self.automator.health_check:
             def operacao_completa():
-                return self._executar_fluxo_ie(ie, nome_empresa) 
+                estado_anterior = self._verificar_estado_anterior(ie)
+                if estado_anterior:
+                    return self._retomar_processamento(empresa, estado_anterior)
+                return self._executar_fluxo_com_checkpoints(empresa)
                 
             return self.automator.health_check.executar_com_verificacao(
                 operacao_completa, f"Processar IE {ie}", max_tentativas=2
             )
         else:
-            # Fallback para fluxo normal
-            return self._executar_fluxo_ie(ie, nome_empresa)  
+            estado_anterior = self._verificar_estado_anterior(ie)
+            if estado_anterior:
+                return self._retomar_processamento(empresa, estado_anterior)
+            return self._executar_fluxo_com_checkpoints(empresa)
+    
+    def _verificar_estado_anterior(self, ie: str) -> Optional[Dict]:
+        """Verifica se existe estado anterior para retomada"""
+        if not self.gerenciador_estado:
+            return None
+            
+        try:
+            sessoes_interrompidas = self.gerenciador_estado.recuperar_sessao_interrompida()
+            for sessao in sessoes_interrompidas:
+                if sessao['ie'] == ie:
+                    logger.info(f"Encontrado estado anterior para {ie}: {sessao['etapa']} ({sessao['progresso']}%)")
+                    return sessao
+            return None
+        except Exception as e:
+            logger.error(f"Erro ao verificar estado anterior: {e}")
+            return None
         
-    def _executar_fluxo_ie(self, ie: str, nome_empresa: str = "") -> bool:
-        """Fluxo principal de processamento de IE"""
+    def _retomar_processamento(self, empresa: Dict, estado_anterior: Dict) -> bool:
+        """Retoma o processamento de onde parou"""
+        ie = empresa['ie']
+        etapa = estado_anterior['etapa']
+        progresso = estado_anterior['progresso']
         
-        if not self._preencher_formulario(ie):
-            logger.error("Falha ao preencher formulário")
-            return False
+        logger.info(f"Retomando processamento de {ie} da etapa: {etapa}")
         
+        retomadas = {
+            'formulario': self._retomar_formulario,
+            'captcha': self._retomar_captcha, 
+            'consulta': self._retomar_consulta,
+            'download': self._retomar_download,
+            'validacao': self._retomar_validacao
+        }
+        
+        if etapa in retomadas:
+            return retomadas[etapa](empresa, estado_anterior)
+        else:
+            logger.warning(f"Etapa {etapa} não suporta retomada, reiniciando...")
+            return self._executar_fluxo_com_checkpoints(empresa)
+    
+    def _retomar_formulario(self, empresa: Dict, estado_anterior: Dict) -> bool:
+        """Retoma da etapa de formulário"""
+        logger.info(f"Retomando formulário para {empresa['ie']}")
+        return self._executar_fluxo_com_checkpoints(empresa)  # Reinicia do formulário
+    
+    def _retomar_captcha(self, empresa: Dict, estado_anterior: Dict) -> bool:
+        """Retoma da etapa de CAPTCHA"""
+        logger.info(f"Retomando CAPTCHA para {empresa['ie']}")
+        self._criar_checkpoint(empresa, "captcha", 40)
+        return self._executar_desde_captcha(empresa)
+    
+    def _retomar_consulta(self, empresa: Dict, estado_anterior: Dict) -> bool:
+        """Retoma da etapa de consulta"""
+        logger.info(f"Retomando consulta para {empresa['ie']}")
+        self._criar_checkpoint(empresa, "consulta", 60)
+        return self._executar_desde_consulta(empresa)
+    
+    def _retomar_validacao(self, empresa: Dict, estado_anterior: Dict) -> bool:
+        """Retoma da etapa de validação"""
+        logger.info(f"Retomando validação para {empresa['ie']}")
+        self._criar_checkpoint(empresa, "validacao", 70)
+        return self._executar_desde_validacao(empresa)
+        
+    def _retomar_download(self, empresa: Dict, estado_anterior: Dict) -> bool:
+        """Retoma o processo na etapa de download"""
+        ie = empresa['ie']
+        logger.info(f"Retomando download para {ie}")
+        
+        try:
+            if not self._validar_resultados(ie):
+                logger.warning("Resultados não encontrados na retomada, reiniciando...")
+                return self._executar_fluxo_com_checkpoints(empresa)
+            
+            return self._processar_download(ie, empresa['nome'])
+            
+        except Exception as e:
+            logger.error(f"Erro na retomada do download: {e}")
+            return self._executar_fluxo_com_checkpoints(empresa)
+    
+    def _executar_desde_captcha(self, empresa: Dict) -> bool:
+        """Executa fluxo a partir do CAPTCHA"""
+        ie = empresa['ie']
+        
+        self._criar_checkpoint(empresa, "captcha", 40)
         if not self._aguardar_captcha_manual():
-            logger.error("Falha na resolução do CAPTCHA")
+            self._rollback_etapa(empresa, "formulario", "Falha no CAPTCHA")
             return False
         
+        return self._executar_desde_consulta(empresa)
+    
+    def _executar_desde_consulta(self, empresa: Dict) -> bool:
+        """Executa fluxo a partir da consulta"""
+        ie = empresa['ie']
+        
+        self._criar_checkpoint(empresa, "consulta", 60)
         if not self._executar_consulta(ie):
-            logger.error("Falha na consulta")
+            self._rollback_etapa(empresa, "captcha", "Falha na consulta")
             return False
         
+        return self._executar_desde_validacao(empresa)
+    
+    def _executar_desde_validacao(self, empresa: Dict) -> bool:
+        """Executa fluxo a partir da validação"""
+        ie = empresa['ie']
+        
+        self._criar_checkpoint(empresa, "validacao", 70)
         if not self._validar_resultados(ie):
             logger.info("Nenhuma nota encontrada")
+            self._criar_checkpoint(empresa, "concluido", 100, total_notas=0)
             return False
         
         total_notas = self.gerenciador_download.tem_notas_tabela()
+        self._criar_checkpoint(empresa, "download", 80, total_notas=total_notas)
+        
         if total_notas > 0:
-            return self._processar_download(ie, nome_empresa)
+            sucesso = self._processar_download(ie, empresa['nome'])
+            if sucesso:
+                self._criar_checkpoint(empresa, "concluido", 100, total_notas=total_notas)
+            return sucesso
         else:
+            self._criar_checkpoint(empresa, "concluido", 100, total_notas=0)
             return False
-    
+        
+    def _executar_fluxo_com_checkpoints(self, empresa: Dict) -> bool:
+        """Fluxo principal com checkpoints em cada etapa"""
+        try:
+            ie = empresa['ie']
+            
+            self._criar_checkpoint(empresa, "formulario", 20)
+            if not self._preencher_formulario(ie):
+                self._rollback_etapa(empresa, "inicio", "Falha no formulário")
+                return False
+            
+            return self._executar_desde_captcha(empresa)
+                
+        except Exception as e:
+            logger.error(f"Erro não esperado no fluxo: {e}")
+            self._rollback_etapa(empresa, "inicio", f"Erro não esperado: {e}")
+            return False
+        
+    def _criar_checkpoint(self, empresa: Dict, etapa: str, progresso: int, total_notas: int = None):
+        """Wrapper para criar checkpoint"""
+        if self.gerenciador_estado:
+            dados_sessao = {
+                'url_atual': self.driver.current_url,
+                'titulo': self.driver.title
+            }
+            
+            if total_notas is not None:
+                total_notas_int = int(total_notas) 
+            else:
+                total_notas_int = None
+                
+            self.gerenciador_estado.criar_checkpoint(
+                empresa, etapa, progresso, dados_sessao, total_notas_int, 0
+            )
+
+    def _rollback_etapa(self, empresa: Dict, etapa_anterior: str, motivo: str):
+        """Wrapper para rollback"""
+        if self.gerenciador_estado:
+            self.gerenciador_estado.rollback_etapa(empresa, etapa_anterior, motivo)
+
     def _preencher_formulario(self, ie: str) -> bool:
+        inicio = time.time()
+        sucesso = False
+        
         def tentar_preencher():
+            nonlocal sucesso
             time.sleep(2)
             
             with self.gerenciador_iframe.contexto_iframe((By.ID, "iNetaccess")):
-                # Preencher datas primeiro - método específico para campos com máscara
                 if not self._preencher_data_com_mascara("cmpDataInicial", self.config.data_inicio):
                     return False
                     
                 if not self._preencher_data_com_mascara("cmpDataFinal", self.config.data_fim):
                     return False
                 
-                # Preencher IE (campo normal)
                 try:
                     campo_ie = self.driver.find_element(By.ID, "cmpNumIeDest")
                     campo_ie.clear()
                     time.sleep(0.3)
                     campo_ie.send_keys(ie)
                     
-                    # Verificar se IE foi preenchido
                     if campo_ie.get_attribute("value") != ie:
                         self.driver.execute_script(f"arguments[0].value = '{ie}';", campo_ie)
                         
@@ -90,7 +238,6 @@ class ProcessadorIE:
                     logger.error(f"Erro ao preencher IE: {e}")
                     return False
                 
-                # Configurações adicionais
                 seletor_modelo = Select(self.driver.find_element(By.ID, "cmpModelo"))
                 seletor_modelo.select_by_value("-")
                 
@@ -101,11 +248,20 @@ class ProcessadorIE:
                 except:
                     pass
                 
+                sucesso = True
                 return True
         
-        return gerenciador_retry.executar_com_retry(
-            tentar_preencher, max_tentativas=2, nome_operacao="Preencher Formulário"
-        )
+        try:
+            resultado = gerenciador_retry.executar_com_retry(
+                tentar_preencher, max_tentativas=2, nome_operacao="Preencher Formulário"
+            )
+            return resultado
+        finally:
+            tempo_decorrido = time.time() - inicio
+            if hasattr(self, 'automator') and hasattr(self.automator, 'timeout_manager'):
+                self.automator.timeout_manager.registrar_tempo_operacao(
+                    TipoOperacao.CONSULTA, tempo_decorrido, sucesso
+                )
 
     def _preencher_data_com_mascara(self, campo_id: str, data_str: str) -> bool:
         """Preenche campo de data com máscara usando múltiplas estratégias"""
@@ -117,7 +273,6 @@ class ProcessadorIE:
             self._preencher_data_backspace
         ], 1):
             if metodo(campo_id, data_formatada):
-                # Verificar se preencheu corretamente
                 if self._verificar_data_preenchida(campo_id, data_formatada):
                     return True
                 else:
@@ -141,10 +296,9 @@ class ProcessadorIE:
         """Preenche data digitando caracter por caracter"""
         try:
             elemento = self.driver.find_element(By.ID, campo_id)
-            elemento.click()  # Focar no campo
-            elemento.clear()  # Limpar primeiro
+            elemento.click() 
+            elemento.clear()  
             
-            # Digitar cada caractere com pequeno delay
             for char in data:
                 elemento.send_keys(char)
                 time.sleep(0.1)
@@ -158,15 +312,13 @@ class ProcessadorIE:
         try:
             elemento = self.driver.find_element(By.ID, campo_id)
             
-            # Limpar com Backspace
             elemento.click()
-            for _ in range(10):  # Limpar completamente
+            for _ in range(10):
                 elemento.send_keys(Keys.BACKSPACE)
                 time.sleep(0.05)
             
             time.sleep(0.5)
             
-            # Preencher nova data
             for char in data:
                 elemento.send_keys(char)
                 time.sleep(0.1)
@@ -181,7 +333,6 @@ class ProcessadorIE:
             elemento = self.driver.find_element(By.ID, campo_id)
             valor_obtido = elemento.get_attribute("value") or ""
             
-            # Verificar se não está vazio e contém a data esperada
             return valor_obtido and data_esperada in valor_obtido
         except:
             return False
